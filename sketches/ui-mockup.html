@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Arcane Academy — UI mockup</title>
+<style>
+  /* ============ THEME TOKENS ============
+     All color lives in tokens. A theme = one token block.
+     Default = Candlelight (dark). System-light users get Manuscript
+     unless an explicit theme is chosen (data-theme on <html>). */
+  :root{
+    /* surfaces */
+    --bg:#0e0b16; --bg-glow:#1b1430; --panel:#171226; --panel2:#1e1830; --col-left:#140f22;
+    --head:#211a38; --edge:#33294d; --hover:#241d3a; --card:#1b1530; --card-active:#1d1a36;
+    --mtr-bg:#2a2140; --row-edge:#221b36; --foot:#141021; --bar-off:#3a2f4d;
+    /* text tiers (—-label ≈4.6:1 per UI-U1) */
+    --ink:#e9e2ff; --dim:#a99fce; --label:#8a80ad; --faint:#6f6690;
+    /* semantics (stamina de-collided from gold per UI-U2; light lifted off gold) */
+    --gold:#f2c66b; --insight:#9fb2ff; --renown:#ff9ec4; --ok:#7fd6a0;
+    --life:#ff7a8a; --stam:#cdd06a; --mana:#b79bff;
+    /* elements */
+    --prism:#e9e2ff; --fire:#ff7a4d; --water:#5fb8ff; --earth:#8fd08a;
+    --air:#9fe8e0; --dark:#c39bff; --light:#ffe9a8;
+    --accent:#c39bff;
+    --mono:"Cascadia Code","JetBrains Mono","Consolas",ui-monospace,monospace;
+  }
+  /* System preference: light OS + no explicit choice → Manuscript */
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme]){
+      --bg:#e7dcc3; --bg-glow:#f3ecd9; --panel:#f6efdd; --panel2:#eee4cb; --col-left:#f1e8d1;
+      --head:#efe5cc; --edge:#c8b68c; --hover:#e7dbbc; --card:#faf4e4; --card-active:#f1e9d2;
+      --mtr-bg:#ddd0ac; --row-edge:#e0d4b2; --foot:#eadfc4; --bar-off:#d5c8a4;
+      --ink:#332a1e; --dim:#5d4f3a; --label:#6d5c42; --faint:#8a7a5e;
+      --gold:#8a6412; --insight:#3f5aa8; --renown:#a83367; --ok:#2f7d4f;
+      --life:#b52a40; --stam:#6e6f1d; --mana:#5b46a4;
+      --prism:#4a3d63; --fire:#b23c12; --water:#1e6fa8; --earth:#3c7a32;
+      --air:#0f7d74; --dark:#6a3fa0; --light:#8a6a00;
+      --accent:#6a3fa0;
+    }
+  }
+  /* Explicit themes (picker) — data-theme always wins over the media query */
+  :root[data-theme="manuscript"]{
+    --bg:#e7dcc3; --bg-glow:#f3ecd9; --panel:#f6efdd; --panel2:#eee4cb; --col-left:#f1e8d1;
+    --head:#efe5cc; --edge:#c8b68c; --hover:#e7dbbc; --card:#faf4e4; --card-active:#f1e9d2;
+    --mtr-bg:#ddd0ac; --row-edge:#e0d4b2; --foot:#eadfc4; --bar-off:#d5c8a4;
+    --ink:#332a1e; --dim:#5d4f3a; --label:#6d5c42; --faint:#8a7a5e;
+    --gold:#8a6412; --insight:#3f5aa8; --renown:#a83367; --ok:#2f7d4f;
+    --life:#b52a40; --stam:#6e6f1d; --mana:#5b46a4;
+    --prism:#4a3d63; --fire:#b23c12; --water:#1e6fa8; --earth:#3c7a32;
+    --air:#0f7d74; --dark:#6a3fa0; --light:#8a6a00;
+    --accent:#6a3fa0;
+  }
+  :root[data-theme="umbral"]{
+    --bg:#070510; --bg-glow:#150d26; --panel:#0e0919; --panel2:#130d22; --col-left:#0b0714;
+    --head:#191028; --edge:#2b2145; --hover:#1c1430; --card:#120b20; --card-active:#181129;
+    --mtr-bg:#221741; --row-edge:#1a1230; --foot:#0a0713; --bar-off:#2e2350;
+    --ink:#d9c8ff; --dim:#9a86c9; --label:#8672b5; --faint:#655490;
+    --gold:#d9b25a; --insight:#8fa6ff; --renown:#f08ac0; --ok:#6fd39c;
+    --life:#ff6b7e; --stam:#c2c94f; --mana:#a98bff;
+    --prism:#f2eaff; --fire:#ff7038; --water:#4cb1ff; --earth:#7cc978;
+    --air:#8fe4da; --dark:#d4a9ff; --light:#ffe291;
+    --accent:#d4a9ff;
+  }
+  :root[data-theme="contrast"]{
+    --bg:#000; --bg-glow:#000; --panel:#000; --panel2:#0a0a0a; --col-left:#050505;
+    --head:#000; --edge:#7a7a7a; --hover:#1c1c1c; --card:#0a0a0a; --card-active:#151515;
+    --mtr-bg:#2a2a2a; --row-edge:#333; --foot:#000; --bar-off:#444;
+    --ink:#fff; --dim:#d0d0d0; --label:#e6e6e6; --faint:#9a9a9a;
+    --gold:#ffd24d; --insight:#8ab6ff; --renown:#ff86c2; --ok:#4fe08a;
+    --life:#ff5c70; --stam:#e2e35c; --mana:#c4a6ff;
+    --prism:#fff; --fire:#ff7a3d; --water:#4db8ff; --earth:#6ee06a;
+    --air:#7df1e5; --dark:#d8a9ff; --light:#ffe97a;
+    --accent:#fff;
+  }
+  /* data-theme="candlelight" simply opts out of the light media query; defaults hold. */
+
+  /* ============ LAYOUT & COMPONENTS (all colors via tokens) ============ */
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 700px at 70% -10%,var(--bg-glow),var(--bg) 60%);
+    color:var(--ink);font-family:var(--mono);font-size:13.5px;line-height:1.5;padding:14px}
+  .wrap{max-width:1200px;margin:0 auto;border:1px solid var(--edge);border-radius:10px;
+    overflow:hidden;background:var(--panel);box-shadow:0 20px 60px #0006}
+  header{padding:9px 14px;background:linear-gradient(180deg,var(--head),var(--panel));border-bottom:1px solid var(--edge);
+    display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .title{font-size:15px;letter-spacing:.14em;color:var(--ink);font-weight:600}
+  .title .tag{color:var(--faint);font-weight:400;letter-spacing:.02em;font-size:11.5px}
+  .who{color:var(--dim);font-size:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .themepick{font-family:inherit;font-size:11.5px;color:var(--ink);background:var(--hover);
+    border:1px solid var(--edge);border-radius:5px;padding:2px 6px}
+  .tabs{display:flex;flex-wrap:wrap;gap:2px;padding:6px 10px;background:var(--panel2);border-bottom:1px solid var(--edge)}
+  .tabs a{padding:5px 12px;color:var(--dim);cursor:pointer;border-radius:6px;user-select:none;font-size:12.5px}
+  .tabs a:hover{background:var(--hover);color:var(--ink)}
+  .tabs a.on{background:var(--hover);color:var(--ink);box-shadow:inset 0 0 0 1px var(--edge);font-weight:600}
+  .tabs a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .body{display:grid;grid-template-columns:186px 1fr 236px;min-height:452px}
+  .left{padding:12px;border-right:1px solid var(--edge);background:var(--col-left)}
+  main{padding:14px 16px}
+  .right{padding:12px;border-left:1px solid var(--edge);background:var(--panel2)}
+  h2{margin:0 0 6px;font-size:11px;letter-spacing:.18em;color:var(--label);text-transform:uppercase;font-weight:600}
+  h2.mt{margin-top:16px}
+  .sub{color:var(--faint);font-size:11.5px;margin-bottom:12px}
+  .row{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:2px 0;font-variant-numeric:tabular-nums}
+  .row .nm{color:var(--dim)} .row .vl{color:var(--ink)} .row .rt{color:var(--ok);font-size:11px}
+  .mtr{height:5px;border-radius:3px;background:var(--mtr-bg);margin:2px 0 6px;overflow:hidden}
+  .mtr i{display:block;height:100%}
+  .g{color:var(--gold)} .ins{color:var(--insight)} .ren{color:var(--renown)}
+  .life{color:var(--life)} .stam{color:var(--stam)} .mana{color:var(--mana)}
+  .prism{color:var(--prism)} .fire{color:var(--fire)} .water{color:var(--water)} .earth{color:var(--earth)}
+  .air{color:var(--air)} .dark{color:var(--dark)} .lightc{color:var(--light)}
+  .mat{color:var(--dim);font-size:12px;display:flex;justify-content:space-between;padding:1px 0}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+  th{text-align:left;color:var(--label);font-weight:500;border-bottom:1px solid var(--edge);padding:4px 6px}
+  td{padding:4px 6px;border-bottom:1px solid var(--row-edge)}
+  .btn{display:inline-block;border:1px solid var(--edge);background:var(--hover);color:var(--ink);
+    padding:2px 9px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px}
+  .btn:hover{border-color:var(--accent)}
+  .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .btn.warn{color:var(--light)} .btn.def{border-color:var(--edge)}
+  .pill{border:1px solid var(--edge);border-radius:20px;padding:1px 9px;color:var(--dim);font-size:11.5px}
+  .lockt{color:var(--faint)}
+  .card{border:1px solid var(--edge);border-radius:6px;padding:10px;margin-top:10px;background:var(--card)}
+  .chron{font-size:12px;color:var(--dim)} .chron .t{color:var(--faint)} .chron .ev{color:var(--light)}
+  .chron .found{color:var(--renown)}
+  ul.chron{padding-left:0;margin:6px 0 0} .chron li{margin-bottom:6px;list-style:none}
+  pre{color:var(--dim);font-size:12px;line-height:1.5;margin:0;overflow-x:auto}
+  .trow{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;align-items:baseline;margin-top:6px}
+  .tag{color:var(--label);font-size:11px}
+  /* task cards on a grid — whole card is the button */
+  .tgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(186px,1fr));gap:10px;margin-top:6px}
+  .tcard{border:1px solid var(--edge);border-left:3px solid var(--edge);border-radius:8px;padding:9px 10px;
+    background:var(--card);display:flex;flex-direction:column;gap:5px;min-height:88px;
+    cursor:pointer;transition:border-color .12s,transform .05s,box-shadow .12s}
+  .tcard:hover{border-color:var(--accent);box-shadow:0 3px 14px #0004}
+  .tcard:active{transform:translateY(1px)}
+  .tcard:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .tcard.sel{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+  .tcard .tt{display:flex;justify-content:space-between;gap:6px;align-items:baseline}
+  .tcard .nm{color:var(--ink);font-weight:600;font-size:12.5px;line-height:1.25}
+  .chip{font-size:10px;color:var(--label);border:1px solid var(--edge);border-radius:10px;padding:0 6px;white-space:nowrap}
+  .tcard .io{color:var(--dim);font-size:12px}
+  .tcard.active{background:var(--card-active)}
+  .tcard.locked{opacity:.55;cursor:not-allowed}
+  .tcard.locked:hover{border-color:var(--edge);box-shadow:none}
+  .hide{display:none}
+  .foot{padding:8px 14px;border-top:1px solid var(--edge);color:var(--faint);font-size:11px;
+    display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;background:var(--foot)}
+  @media(max-width:860px){.body{grid-template-columns:1fr}.left,.right{border:0;border-bottom:1px solid var(--edge)}}
+  @media (prefers-reduced-motion: reduce){ .tcard{transition:none} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="title">ARCANE ACADEMY <span class="tag">· working title · static UI mockup (click the tabs)</span></div>
+    <div class="who">
+      <span>Vael the Adept · Lv 7 · 3rd Era</span>
+      <label>Theme:
+        <select class="themepick" id="themeSel">
+          <option value="system">System</option>
+          <option value="candlelight">Candlelight (dark)</option>
+          <option value="manuscript">Manuscript (light)</option>
+          <option value="umbral">Umbral (dark)</option>
+          <option value="contrast">High Contrast</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <a class="on" data-tab="main" tabindex="0">Main</a>
+    <a data-tab="skills" tabindex="0">Skills</a>
+    <a data-tab="player" tabindex="0">Player</a>
+    <a data-tab="home" tabindex="0">Home</a>
+    <a data-tab="spellcraft" tabindex="0">Spell Craft</a>
+    <a data-tab="equipment" tabindex="0">Equipment</a>
+    <a data-tab="potions" tabindex="0">Potions</a>
+    <a data-tab="bestiary" tabindex="0">Bestiary</a>
+    <a data-tab="academy" tabindex="0">Academy</a>
+  </div>
+
+  <div class="body">
+    <!-- LEFT: physical resources -->
+    <div class="left">
+      <h2>Resources</h2>
+      <div class="row"><span class="nm g">⦿ Gold</span><span><span class="vl">4.10K</span> <span class="rt">+31/s</span></span></div>
+      <div class="row"><span class="nm ins">◈ Insight</span><span><span class="vl">1.9K</span> <span class="rt">+9/s</span></span></div>
+      <div class="row"><span class="nm ren">★ Renown</span><span class="vl">214</span></div>
+
+      <h2 class="mt">Materials</h2>
+      <div class="mat"><span>⚘ Moonpetal</span><span>12</span></div>
+      <div class="mat"><span>✿ Emberroot</span><span>5</span></div>
+      <div class="mat"><span>⛏ Iron Ore</span><span>30</span></div>
+      <div class="mat"><span>✧ Spirit Dust</span><span>8</span></div>
+      <div class="mat"><span>◈ Wyrm Scale</span><span>2</span></div>
+      <div class="mat"><span>❂ Ash Salt</span><span>17</span></div>
+
+      <h2 class="mt">Meta</h2>
+      <div class="row"><span class="nm">∞ Aeon</span><span class="vl">87</span></div>
+      <div class="row"><span class="nm">⌛ Legacy</span><span class="vl">4.2K</span></div>
+    </div>
+
+    <!-- CENTER: main panel -->
+    <main>
+      <!-- MAIN = ACTIVITY / TASKS -->
+      <section data-panel="main">
+        <h2>Main · Activity</h2>
+        <div class="sub">Tasks are what your mage does. Continuous tasks fill Activity slots; instant tasks fire once. A cost you can't pay auto-pauses the task until you can.</div>
+
+        <h2 class="mt">Active — slots 2 / 3 <span class="tag" style="font-weight:400">(click a card to stop it)</span></h2>
+        <div class="tgrid">
+          <div class="tcard active" style="border-left-color:var(--insight)" title="Click to stop" tabindex="0">
+            <div class="tt"><span class="nm">Study</span><span class="chip">perpetual</span></div>
+            <div class="mtr"><i style="width:60%;background:var(--insight)"></i></div>
+            <div class="io tag">Research · running</div>
+            <div class="io">⚡0.2/s → <span class="ins">◈ +0.55/s</span></div>
+          </div>
+          <div class="tcard active" style="border-left-color:var(--fire)" title="Click to stop" tabindex="0">
+            <div class="tt"><span class="nm">Hunt: <span class="fire">Cinder Imp</span></span><span class="chip">12s ↻</span></div>
+            <div class="mtr"><i style="width:38%;background:var(--fire)"></i></div>
+            <div class="io tag">Hunt</div>
+            <div class="io">⚡0.5/s → ▲ ess, Emberroot · risks <span class="life">✚</span></div>
+          </div>
+        </div>
+
+        <h2 class="mt">Available <span class="tag" style="font-weight:400">[tag ▾] [type ▾] [search] · click a card to start it</span></h2>
+        <div class="tgrid">
+          <div class="tcard" style="border-left-color:var(--gold)" title="Click to do" tabindex="0">
+            <div class="tt"><span class="nm">Clean Stables</span><span class="chip">Instant</span></div>
+            <div class="io tag">Starting Out</div>
+            <div class="io">⚡1 → <span class="g">⦿2.5</span></div>
+          </div>
+          <div class="tcard" style="border-left-color:var(--insight)" title="Click to do" tabindex="0">
+            <div class="tt"><span class="nm">Scribe Scroll</span><span class="chip">Instant</span></div>
+            <div class="io tag">Crafting · At 5:+1 · ×15 done</div>
+            <div class="io">◈10 ✦1 → Scroll×1</div>
+          </div>
+          <div class="tcard" style="border-left-color:var(--dark)" title="Click to do" tabindex="0">
+            <div class="tt"><span class="nm">Imbue Gem <span class="dark">(Dark)</span></span><span class="chip">Instant</span></div>
+            <div class="io tag">Imbuement</div>
+            <div class="io">Gem×1 ☾5 → ☾ Gem×1</div>
+          </div>
+          <div class="tcard" style="border-left-color:var(--gold)" title="Click to start" tabindex="0">
+            <div class="tt"><span class="nm">Smith</span><span class="chip">Running · 15s</span></div>
+            <div class="io tag">Craftwork · ↻ repeat</div>
+            <div class="io">⚡0.4/s → <span class="g">⦿5</span></div>
+          </div>
+          <div class="tcard" style="border-left-color:var(--light)" title="Click to start" tabindex="0">
+            <div class="tt"><span class="nm">Fulfil: Ward a Barn</span><span class="chip">Contract · 120s</span></div>
+            <div class="io tag">Contract</div>
+            <div class="io"><span class="lightc">☀10</span> / 1 student → <span class="g">⦿60</span> <span class="ren">★18</span></div>
+          </div>
+          <div class="tcard" style="border-left-color:var(--mana)" title="Click to start" tabindex="0">
+            <div class="tt"><span class="nm">Rest</span><span class="chip">perpetual</span></div>
+            <div class="io tag">Rest</div>
+            <div class="io">— → <span class="life">✚+1/s</span> ⚡+0.8/s essence+0.5/s</div>
+          </div>
+          <div class="tcard" style="border-left-color:var(--insight)" title="Click to start" tabindex="0">
+            <div class="tt"><span class="nm">Unlock Bestiary</span><span class="chip">Upgrade</span></div>
+            <div class="io tag">Knowledge · 75s · Max 1 · 0/1</div>
+            <div class="io">→ opens the Bestiary tab</div>
+          </div>
+          <div class="tcard locked" style="border-left-color:var(--gold)" title="Requirements unmet">
+            <div class="tt"><span class="nm">🔒 Found the Academy</span><span class="chip">Housing</span></div>
+            <div class="io tag">Max 1 · 0/1</div>
+            <div class="io lockt">needs ⦿500 ★30 Charter Site</div>
+          </div>
+        </div>
+
+        <h2 class="mt">Chronicle</h2>
+        <ul class="chron">
+          <li><span class="t">14:02</span> Task complete: <span class="ev">Scribe Scroll</span> (+1 Scroll). <span class="tag">×15 done — At 15 bonus active</span></li>
+          <li><span class="t">14:00</span> Contract <span class="ev">“Cleanse the Old Well”</span> completed (+18 ★, +240 ⦿).</li>
+          <li><span class="t">11:48</span> <span class="found">★ THE FOUNDING — Thornwatch Tower becomes the Arcane Academy.</span></li>
+        </ul>
+      </section>
+
+      <!-- SPELL CRAFT -->
+      <section data-panel="spellcraft" class="hide">
+        <h2>Spell Craft</h2>
+        <div class="sub">Compose a spell from an element, a shape, and a component. Casting spends Mana; crafting spends essence.</div>
+        <div class="card">
+          <b>Compose</b><br>
+          Element: [<span class="dark">Dark ☾</span> ▾]  Shape: [Bolt ▾]  Component: [Siphon ▾]<br>
+          <span class="lockt">→ “Umbral Bolt (Siphon)” — 18 Mana · deals Dark dmg, heals 20% · costs ☾40 to inscribe</span>
+          <div style="margin-top:6px"><span class="btn">Inscribe spell</span> <span class="btn def">Preview</span></div>
+        </div>
+        <h2 class="mt">Known spells</h2>
+        <table>
+          <tr><th>Spell</th><th>Element</th><th>Cost</th><th>Effect</th></tr>
+          <tr><td>Spark</td><td class="fire">Fire ▲</td><td>6 ✦</td><td>minor Fire dmg (cantrip)</td></tr>
+          <tr><td>Mend</td><td class="lightc">Light ☀</td><td>10 ✦</td><td>heal Life</td></tr>
+          <tr><td>Umbral Bolt</td><td class="dark">Dark ☾</td><td>18 ✦</td><td>Dark dmg + lifesteal</td></tr>
+          <tr><td class="lockt">Prismatic Nova 🔒</td><td class="prism">Prismatic ❖</td><td>—</td><td>needs all six essences balanced</td></tr>
+        </table>
+      </section>
+
+      <!-- BESTIARY -->
+      <section data-panel="bestiary" class="hide">
+        <h2>Bestiary</h2>
+        <div class="sub">Creatures to hunt, study, or summon. Fighting risks Life; drops give essence &amp; materials. Elements have opposites (Fire↔Water, Earth↔Air, Light↔Dark).</div>
+        <table>
+          <tr><th>Creature</th><th>Affinity</th><th>Threat</th><th>Drops</th><th></th></tr>
+          <tr><td>Cinder Imp</td><td class="fire">Fire ▲</td><td>Low</td><td>▲ essence, Emberroot</td><td><span class="btn">Hunt</span></td></tr>
+          <tr><td>Marsh Drake</td><td class="water">Water ▼</td><td>Med</td><td>▼ essence, Wyrm Scale</td><td><span class="btn">Hunt</span></td></tr>
+          <tr><td>Grave Wight</td><td class="dark">Dark ☾</td><td>Med</td><td>☾ essence, Spirit Dust</td><td><span class="btn">Hunt</span></td></tr>
+          <tr><td class="lockt">Prism Wyrm 🔒</td><td class="prism">Prismatic ❖</td><td>High</td><td>❖ essence (rare)</td><td><span class="lockt">study more</span></td></tr>
+        </table>
+        <div class="card"><b>Tip:</b> bring the <i>opposing</i> element — Water spells shred the Cinder Imp; Light burns the Grave Wight.</div>
+      </section>
+
+      <!-- HOME -->
+      <section data-panel="home" class="hide">
+        <h2>Home</h2>
+        <div class="sub">Your dwelling. Furnish it for passive bonuses; it becomes the academy's first hall at the Founding.</div>
+        <table>
+          <tr><th>Fixture</th><th>Lv</th><th>Effect</th><th></th></tr>
+          <tr><td>Study Desk</td><td>3</td><td class="ins">◈ +9/s</td><td><span class="btn">Upgrade</span></td></tr>
+          <tr><td>Alembic</td><td>2</td><td>potion brewing +20%</td><td><span class="btn">Upgrade</span></td></tr>
+          <tr><td>Hearth</td><td>2</td><td class="fire">▲ Fire +2.1/s</td><td><span class="btn">Upgrade</span></td></tr>
+          <tr><td>Ossuary</td><td>1</td><td class="dark">☾ Dark +3.0/s</td><td><span class="btn">Upgrade</span></td></tr>
+        </table>
+        <div class="card"><b class="ren">Founding an Academy</b> — Gold ⦿4.1K/500 ✔ · Renown ★214/30 ✔ · Charter ✔ · Site ✔ &nbsp;
+          <span class="lockt">(already founded — see Academy tab)</span></div>
+      </section>
+
+      <!-- ACADEMY -->
+      <section data-panel="academy" class="hide">
+        <h2>Academy</h2>
+        <div class="sub">The institution you founded. Rooms teach the elements; students auto-enroll and graduate into Futures; dispatch them on contracts.</div>
+        <table>
+          <tr><th>Hall</th><th>Element</th><th>Lv</th><th>Yield/s</th><th></th></tr>
+          <tr><td>Ossuary Lecture Hall</td><td class="dark">Dark ☾</td><td>7</td><td class="dark">☾ +11.0</td><td><span class="btn">Upgrade</span></td></tr>
+          <tr><td>Ember Forge Hall</td><td class="fire">Fire ▲</td><td>4</td><td class="fire">▲ +5.2</td><td><span class="btn">Upgrade</span></td></tr>
+          <tr><td>Grand Library</td><td class="lockt">Utility</td><td>3</td><td class="ins">◈ +9</td><td><span class="btn">Upgrade</span></td></tr>
+          <tr><td>Dormitory</td><td class="lockt">Utility</td><td>4</td><td>beds 45</td><td><span class="btn">Upgrade</span></td></tr>
+        </table>
+        <div class="card">Students <b>38/45</b> (3 dispatched) · Faculty <b>4/6</b> · Graduating <b>2</b>
+          &nbsp; <span class="btn">Students ▸</span> <span class="btn">Faculty ▸</span> <span class="btn warn">Ascend ▸</span></div>
+      </section>
+
+      <!-- stubs -->
+      <section data-panel="skills" class="hide"><h2>Skills</h2><div class="sub">The progression web (Arcanum-style): Elementalism, Focus, Scribing, Alchemy, Combat, Scholarship. Grows from your first cantrips; feeds every other system. See docs/09.</div></section>
+      <section data-panel="player" class="hide"><h2>Player</h2><div class="sub">Character sheet: level & XP, attributes (Might / Focus / Attunement), per-element resistances, titles, derived stats. See docs/09.</div></section>
+      <section data-panel="equipment" class="hide"><h2>Equipment</h2><div class="sub">Slots — Focus (wand/staff), Robes, Ring, Amulet — plus inventory. Gear grants flat/percent bonuses and element affinity. See docs/09.</div></section>
+      <section data-panel="potions" class="hide"><h2>Potions</h2><div class="sub">Brew consumables from Materials at the Alembic: Life/Stamina/Mana restore, essence tonics, buffs. Held potions usable anywhere. See docs/09.</div></section>
+    </main>
+
+    <!-- RIGHT: player properties -->
+    <div class="right">
+      <h2>Character</h2>
+      <div class="row"><span class="nm life">✚ Life</span><span class="vl">142 / 160</span></div>
+      <div class="mtr"><i style="width:89%;background:var(--life)"></i></div>
+      <div class="row"><span class="nm stam">⚡ Stamina</span><span class="vl">58 / 80</span></div>
+      <div class="mtr"><i style="width:72%;background:var(--stam)"></i></div>
+      <div class="row"><span class="nm mana">✦ Mana</span><span class="vl">210 / 300</span></div>
+      <div class="mtr"><i style="width:70%;background:var(--mana)"></i></div>
+
+      <h2 class="mt">Essence</h2>
+      <div class="row"><span class="nm prism">❖ Prismatic</span><span><span class="vl">12</span> <span class="rt">+0.1</span></span></div>
+      <div class="row"><span class="nm fire">▲ Fire</span><span><span class="vl">340</span> <span class="rt">+2.1</span></span></div>
+      <div class="row"><span class="nm water">▼ Water</span><span><span class="vl">120</span> <span class="rt">+0.9</span></span></div>
+      <div class="row"><span class="nm earth">⬢ Earth</span><span><span class="vl">260</span> <span class="rt">+1.4</span></span></div>
+      <div class="row"><span class="nm air">≈ Air</span><span><span class="vl">90</span> <span class="rt">+0.6</span></span></div>
+      <div class="row"><span class="nm dark">☾ Dark</span><span><span class="vl">410</span> <span class="rt">+3.0</span></span></div>
+      <div class="row"><span class="nm lightc">☀ Light</span><span><span class="vl">150</span> <span class="rt">+1.1</span></span></div>
+
+      <h2 class="mt">Opposed pairs</h2>
+      <div class="chron">Fire ↔ Water · Earth ↔ Air · Light ↔ Dark<br>Balance all six → ❖ Prismatic.</div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span>Arcane Academy — static sketch. Left = resources · top = tabs · right = your character. Theme picker in the header.</span>
+    <span>Arcanum-style solo mage · idle-first · no server</span>
+  </div>
+</div>
+
+<script>
+  // tabs
+  var tabs = document.querySelectorAll('.tabs a');
+  var panels = document.querySelectorAll('section[data-panel]');
+  tabs.forEach(function(a){a.addEventListener('click',function(){
+    tabs.forEach(function(n){n.classList.remove('on');}); a.classList.add('on');
+    var t=a.dataset.tab;
+    panels.forEach(function(p){p.classList.toggle('hide', p.dataset.panel!==t);});
+  });});
+  // whole task card is the button — click toggles a demo highlight
+  document.querySelectorAll('.tcard').forEach(function(c){
+    if(c.classList.contains('locked'))return;
+    c.addEventListener('click',function(){c.classList.toggle('sel');});
+  });
+  // theme picker: data-theme on <html>; "system" removes it (media query decides). Persisted.
+  var sel = document.getElementById('themeSel');
+  var saved = null;
+  try{ saved = localStorage.getItem('aa-theme'); }catch(e){}
+  if(saved && saved !== 'system'){ document.documentElement.dataset.theme = saved; sel.value = saved; }
+  sel.addEventListener('change', function(){
+    var v = sel.value;
+    if(v === 'system'){ delete document.documentElement.dataset.theme; }
+    else{ document.documentElement.dataset.theme = v; }
+    try{ localStorage.setItem('aa-theme', v); }catch(e){}
+  });
+</script>
+</body>
+</html>

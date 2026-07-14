@@ -1,0 +1,35 @@
+<script lang="ts">
+  import { game } from '../stores';
+  import { fmt, fmtRate } from '../format';
+
+  // amber when at/above 90% of a cap (spec §3.14 "Caps in the left column")
+  $: insightNearCap =
+    $game.resources.insight.cap !== undefined &&
+    $game.resources.insight.amount >= $game.resources.insight.cap * 0.9;
+</script>
+
+<div class="left">
+  <h2>Resources</h2>
+  <div class="row">
+    <span class="nm g">⦿ Gold</span>
+    <span><span class="vl">{fmt($game.resources.gold.amount)}</span> <span class="rt">{fmtRate($game.resources.gold.rate)}</span></span>
+  </div>
+  <div class="row">
+    <span class="nm ins">◈ Insight</span>
+    <span>
+      <span class="vl" class:amber={insightNearCap}>
+        {fmt($game.resources.insight.amount)}{#if $game.resources.insight.cap !== undefined}<span class="lockt"> / {fmt($game.resources.insight.cap)}</span>{/if}
+      </span>
+      <span class="rt">{fmtRate($game.resources.insight.rate)}</span>
+    </span>
+  </div>
+  <div class="row">
+    <span class="nm ren">★ Renown</span>
+    <span><span class="vl">{fmt($game.resources.renown.amount)}</span> <span class="rt">{fmtRate($game.resources.renown.rate)}</span></span>
+  </div>
+
+  <h2 class="mt">Materials</h2>
+  <div class="mat"><span>⚘ Moonpetal</span><span>{fmt($game.materials.moonpetal)}</span></div>
+  <div class="mat"><span>⛏ Iron Ore</span><span>{fmt($game.materials.ironOre)}</span></div>
+  <div class="mat"><span>✧ Spirit Dust</span><span>{fmt($game.materials.spiritDust)}</span></div>
+</div>
