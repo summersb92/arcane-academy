@@ -1,0 +1,12 @@
+{
+  "name": "smoke",
+  "seed": 1,
+  "steps": [
+    { "note": "fresh game starts penniless" },
+    { "assert": { "path": "run.resources.gold", "op": "==", "value": 0 } },
+    { "sim": 60 },
+    { "note": "the hard-coded generator (0.5 gold/s) advanced the resource" },
+    { "assert": { "path": "run.resources.gold", "op": ">=", "value": 25 } },
+    { "assert": { "path": "playtime", "op": ">=", "value": 60 } }
+  ]
+}
