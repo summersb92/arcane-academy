@@ -1,12 +1,14 @@
-// Svelte store bridge.
-//
-// T-001: holds a hard-coded placeholder UiState so the frame renders.
-// T-002 replaces the internals with a selector over the engine's GameState
-// (`toView(state)`) driven by the tick loop — the UiState shape below is the
-// stable contract the panels read, so the panels do not change.
+// Svelte store bridge — the thin UI adapter over the framework-agnostic engine.
+// It owns the live GameState, drives the fixed-timestep tick from an rAF loop
+// (the only DOM the sim touches lives HERE, never in src/engine), and republishes
+// a derived UiState to the panels at a throttled rate.
 
 import { writable } from 'svelte/store';
+import { createAccumulator } from '../engine/tick';
+import { newGame, type GameState, ELEMENTS, type ElementId } from '../engine/state';
+import { setNotation } from './format';
 
+// ---- UiState: the stable view contract the panels read ----
 export interface ResourceView {
   amount: number;
   rate: number;
@@ -35,7 +37,7 @@ export interface TaskView {
   active: boolean;
   locked: boolean;
   paused: boolean;
-  progress: number; // 0..1
+  progress: number;
   lockText?: string;
 }
 export interface TabView {
@@ -59,52 +61,100 @@ export interface UiState {
   chronicle: ChronicleView[];
 }
 
-const PLACEHOLDER: UiState = {
-  resources: {
-    gold: { amount: 12, rate: 0 },
-    insight: { amount: 0, rate: 0, cap: 100 },
-    renown: { amount: 0, rate: 0 },
-  },
-  materials: { moonpetal: 0, ironOre: 0, spiritDust: 0 },
-  vitals: {
-    life: { cur: 20, max: 20 },
-    stamina: { cur: 10, max: 10 },
-    mana: { cur: 0, max: 10 },
-  },
-  essence: [
-    { id: 'prism', label: 'Prismatic', glyph: '❖', cls: 'prism', amount: 0, rate: 0, awakened: false },
-    { id: 'fire', label: 'Fire', glyph: '▲', cls: 'fire', amount: 0, rate: 0, awakened: false },
-    { id: 'water', label: 'Water', glyph: '▼', cls: 'water', amount: 0, rate: 0, awakened: false },
-    { id: 'earth', label: 'Earth', glyph: '⬢', cls: 'earth', amount: 0, rate: 0, awakened: false },
-    { id: 'air', label: 'Air', glyph: '≈', cls: 'air', amount: 0, rate: 0, awakened: false },
-    { id: 'dark', label: 'Dark', glyph: '☾', cls: 'dark', amount: 0, rate: 0, awakened: false },
-    { id: 'light', label: 'Light', glyph: '☀', cls: 'lightc', amount: 0, rate: 0, awakened: false },
-  ],
-  tabs: [
-    { id: 'main', label: 'Main', visible: true, locked: false },
-    { id: 'skills', label: 'Skills', visible: false, locked: false },
-    { id: 'home', label: 'Home', visible: false, locked: false },
-    { id: 'academy', label: 'Academy', visible: true, locked: true },
-  ],
-  tasks: [
-    {
-      id: 'clean_stables',
-      name: 'Clean Stables',
-      kind: 'Instant',
-      cls: 'gold',
-      io: '⚡1 → ⦿2.5',
-      tag: 'Starting Out',
-      active: false,
-      locked: false,
-      paused: false,
-      progress: 0,
-    },
-  ],
-  chronicle: [{ t: '00:00', text: 'You awaken, penniless, in the stable straw.' }],
+const ELEMENT_META: Record<ElementId, { label: string; glyph: string; cls: string }> = {
+  prism: { label: 'Prismatic', glyph: '❖', cls: 'prism' },
+  fire: { label: 'Fire', glyph: '▲', cls: 'fire' },
+  water: { label: 'Water', glyph: '▼', cls: 'water' },
+  earth: { label: 'Earth', glyph: '⬢', cls: 'earth' },
+  air: { label: 'Air', glyph: '≈', cls: 'air' },
+  dark: { label: 'Dark', glyph: '☾', cls: 'dark' },
+  light: { label: 'Light', glyph: '☀', cls: 'lightc' },
 };
 
-/** The whole-game view the UI reads. Replaced by the engine bridge in T-002. */
-export const game = writable<UiState>(PLACEHOLDER);
+function mmss(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const m = Math.floor(s / 60);
+  return `${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
 
-/** Currently selected tab id. */
+/** Derive the panel view-model from canonical state. (Rates are wired up in T-004.) */
+export function toView(state: GameState): UiState {
+  const r = state.run.resources;
+  return {
+    resources: {
+      gold: { amount: r.gold, rate: 0 },
+      insight: { amount: r.insight, rate: 0, cap: state.run.caps.insight },
+      renown: { amount: r.renown, rate: 0 },
+    },
+    materials: { moonpetal: r.moonpetal, ironOre: r.ironOre, spiritDust: r.spiritDust },
+    vitals: {
+      life: { cur: state.run.vitals.life.cur, max: state.run.vitals.life.max },
+      stamina: { cur: state.run.vitals.stamina.cur, max: state.run.vitals.stamina.max },
+      mana: { cur: state.run.vitals.mana.cur, max: state.run.vitals.mana.max },
+    },
+    essence: ELEMENTS.map((id) => {
+      const e = state.run.essence[id];
+      const meta = ELEMENT_META[id];
+      return { id, ...meta, amount: e.amount, rate: 0, awakened: e.awakened };
+    }),
+    tabs: [
+      { id: 'main', label: 'Main', visible: true, locked: false },
+      { id: 'skills', label: 'Skills', visible: state.run.phase !== 'origin', locked: false },
+      { id: 'home', label: 'Home', visible: state.run.flags.lairFounded === true, locked: false },
+      { id: 'academy', label: 'Academy', visible: true, locked: state.run.phase !== 'founded' },
+    ],
+    tasks: [], // populated by the Task system in T-004
+    chronicle: state.run.chronicle
+      .slice(-12)
+      .reverse()
+      .map((c) => ({ t: mmss(c.at), text: c.text, kind: c.kind })),
+  };
+}
+
+// ---- live state + stores ----
+let state: GameState = newGame();
+
+export const game = writable<UiState>(toView(state));
 export const activeTab = writable<string>('main');
+
+export function getState(): GameState {
+  return state;
+}
+
+export function setState(next: GameState): void {
+  state = next;
+  setNotation(state.settings.notation);
+  publish();
+}
+
+/** Push the current engine state into the Svelte store (throttled by the loop). */
+export function publish(): void {
+  game.set(toView(state));
+}
+
+let running = false;
+
+/** Start the real-time loop: rAF feeds wall-time into the engine accumulator. */
+export function startLoop(): void {
+  if (running || typeof requestAnimationFrame === 'undefined') return;
+  running = true;
+  setNotation(state.settings.notation);
+
+  const acc = createAccumulator();
+  let last = performance.now();
+  let sincePublish = 0;
+
+  const frame = (now: number): void => {
+    const elapsed = (now - last) / 1000;
+    last = now;
+    acc.advance(state, Math.min(elapsed, 1)); // clamp huge gaps (tab was backgrounded)
+    sincePublish += elapsed;
+    if (sincePublish >= 0.1) {
+      // ~10 Hz UI publish, decoupled from the 0.1s sim step
+      publish();
+      sincePublish = 0;
+    }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}
