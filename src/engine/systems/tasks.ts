@@ -149,6 +149,16 @@ function applyEffect(state: GameState, e: TaskEffect): void {
     case 'raiseInsightCap':
       state.run.caps.insight += e.amount;
       break;
+    case 'awakenElement': {
+      // Home Ossuary awakens ☾ Dark on its first build. Idempotent across levels —
+      // only the first flip logs, so re-completing (leveling) never re-announces.
+      const ess = state.run.essence[e.element];
+      if (ess && !ess.awakened) {
+        ess.awakened = true;
+        logEvent(state, `${AMOUNT_LABEL[e.element] ?? e.element} essence awakens — it begins to trickle.`, 'ev');
+      }
+      break;
+    }
   }
 }
 

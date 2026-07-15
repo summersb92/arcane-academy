@@ -8,6 +8,7 @@ import { createAccumulator } from '../engine/tick';
 import { newGame, type GameState, ELEMENTS, type ElementId, type ResourceId } from '../engine/state';
 import { AMOUNT_LABEL, TASKS, type Amount, type TaskDef, type TaskType } from '../content/tasks';
 import { CANTRIP_BY_ID } from '../content/cantrips';
+import { FIXTURE_BY_ID } from '../content/home';
 import {
   listTaskInfo,
   taskRates,
@@ -21,6 +22,8 @@ import {
 } from '../engine/systems/tasks';
 import { learnCantrip as engineLearnCantrip, listCantripInfo, outputMult } from '../engine/systems/skills';
 import { essenceRates } from '../engine/systems/essence';
+import { canFound, foundingStatus } from '../engine/systems/founding';
+import type { OfflineSummary } from '../engine/offline';
 import { setNotation } from './format';
 
 // ---- UiState: the stable view contract the panels read ----
@@ -52,6 +55,8 @@ export interface TaskView {
   type: TaskType;
   kind: string; // chip label ("Instant", "Running · 15s", "Perpetual", "Upgrade")
   cls: string; // coloured left-edge / element class
+  panel: 'main' | 'home'; // which tab hosts this card
+  group: string; // raw category (Contract / Fixture / Founding / …) the UI splits on
   tag: string; // category (+ "Max n · c/n" for Limited)
   io: string; // cost → output line
   active: boolean;
@@ -97,6 +102,21 @@ export interface ChronicleView {
   text: string;
   kind?: 'ev' | 'found';
 }
+export interface FoundingReqView {
+  label: string;
+  met: boolean;
+  have?: number; // resource reqs (Gold/Renown)
+  need?: number;
+  note?: string; // flag reqs (Charter/Site)
+}
+export interface FoundingView {
+  phase: string;
+  founded: boolean;
+  canFound: boolean; // gate open right now (all four met, not yet founded)
+  metCount: number;
+  total: number;
+  reqs: FoundingReqView[]; // Gold · Renown · Charter · Site
+}
 export interface UiState {
   resources: { gold: ResourceView; insight: ResourceView; renown: ResourceView };
   materials: { moonpetal: number; ironOre: number; spiritDust: number };
@@ -106,6 +126,7 @@ export interface UiState {
   tasks: TaskView[];
   cantrips: CantripView[];
   slots: { used: number; total: number };
+  founding: FoundingView;
   chronicle: ChronicleView[];
 }
 
@@ -176,7 +197,28 @@ function costLine(def: TaskDef): string {
   const left = cost || '—';
   return out ? `${left} → ${out}` : left;
 }
+/** Home fixtures/Founding tasks have no `output` — their value is a derived per-level
+ *  bonus or a milestone, so describe THAT instead of the empty effect summary. */
+function homePayoff(def: TaskDef): string {
+  const fx = FIXTURE_BY_ID[def.id];
+  if (fx) {
+    if (fx.insightPerLevel) return `+${numStr(fx.insightPerLevel)} ${g('insight')}/s per level`;
+    if (fx.essencePerLevel) return `+${numStr(fx.essencePerLevel.amount)} ${g(fx.essencePerLevel.element)}/s per level`;
+    return 'a curiosity for the lair';
+  }
+  switch (def.id) {
+    case 'secure-charter':
+      return 'grants a Guild Charter';
+    case 'claim-site':
+      return 'claims your Site (your Grounds)';
+    case 'found-academy':
+      return 'founds the Academy — the finale';
+    default:
+      return effectSummary(def);
+  }
+}
 function payoffText(def: TaskDef, info: TaskInfo): string {
+  if (def.panel === 'home') return homePayoff(def);
   if (def.type === 'instant') {
     if (def.output && def.output.length) {
       const o = def.output[0];
@@ -215,6 +257,8 @@ function buildTaskView(state: GameState, def: TaskDef, info: TaskInfo): TaskView
     type: def.type,
     kind: chipText(def),
     cls: def.cls,
+    panel: def.panel ?? 'main',
+    group: def.tag,
     tag: tagText(def, info),
     io: costLine(def),
     active: info.active,
@@ -322,6 +366,8 @@ export function toView(state: GameState): UiState {
   const eRates = essenceRates(state); // cantrip-awakened trickle (adds to any task-granted essence)
   const infos = listTaskInfo(state);
   const insightAtCap = r.insight >= state.run.caps.insight - 1e-9;
+  const fs = foundingStatus(state);
+  const founded = fs.founded;
   return {
     resources: {
       gold: { amount: r.gold, rate: rates.resources.gold ?? 0, rateTip: resourceRateTip(state, 'gold', false) },
@@ -361,12 +407,27 @@ export function toView(state: GameState): UiState {
       { id: 'main', label: 'Main', visible: true, locked: false },
       // The spark reveals Skills (the `awakened` flag is the canonical trigger — T-005).
       { id: 'skills', label: 'Skills', visible: state.run.flags.awakened === true, locked: false },
+      // The lair beat reveals Home (fixtures + the Founding card).
       { id: 'home', label: 'Home', visible: state.run.flags.lairFounded === true, locked: false },
-      { id: 'academy', label: 'Academy', visible: true, locked: state.run.phase !== 'founded' },
+      // Academy: the always-visible beacon, greyed until the Founding flips it (§3.11).
+      { id: 'academy', label: founded ? 'Academy ★' : 'Academy', visible: true, locked: !founded },
     ],
     tasks: TASKS.map((def, i) => buildTaskView(state, def, infos[i])),
     cantrips: listCantripInfo(state).map((info) => buildCantripView(info)),
     slots: { used: slotsUsed(state), total: activitySlots(state) },
+    founding: {
+      phase: state.run.phase,
+      founded,
+      canFound: canFound(state),
+      metCount: fs.metCount,
+      total: fs.total,
+      reqs: [
+        { label: 'Gold', met: fs.gold.met, have: fs.gold.have, need: fs.gold.need },
+        { label: 'Renown', met: fs.renown.met, have: fs.renown.have, need: fs.renown.need },
+        { label: 'Charter', met: fs.charter.met, note: fs.charter.met ? 'secured' : 'a guild charter' },
+        { label: 'Site', met: fs.site.met, note: fs.site.met ? 'claimed' : 'the ruined tower' },
+      ],
+    },
     chronicle: state.run.chronicle
       .slice(-12)
       .reverse()
@@ -379,6 +440,14 @@ let state: GameState = newGame();
 
 export const game = writable<UiState>(toView(state));
 export const activeTab = writable<string>('main');
+
+/**
+ * The most recent offline catch-up summary (set by main.ts after a load/foreground
+ * catch-up), or null if nothing meaningful accrued. T-006b's "While you were away…"
+ * panel subscribes to this; shape is the engine's OfflineSummary (offline.ts):
+ *   { elapsedMs, appliedMs, capped, gains: Partial<Record<ResourceId, number>> }.
+ */
+export const offlineSummary = writable<OfflineSummary | null>(null);
 
 export function getState(): GameState {
   return state;

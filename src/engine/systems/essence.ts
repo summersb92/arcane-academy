@@ -9,12 +9,15 @@
 
 import { CANTRIP_BY_ID } from '../../content/cantrips';
 import type { ElementId, GameState } from '../state';
+import { homeEssenceBase } from './home';
 import { outputMult } from './skills';
 
 /**
- * Pre-multiplier trickle each awakened element receives, summed from the owned
- * cantrips that awakened it. Only awakened elements appear. (T-006 adds Home
- * fixture contributions here — Hearth → fire, Ossuary → dark.)
+ * Pre-multiplier trickle each awakened element receives, summed from BOTH the owned
+ * cantrips that awakened it AND the Home fixtures that feed it (Hearth → fire,
+ * Ossuary → dark). Only awakened elements appear — Ossuary awakens Dark on build,
+ * and the Hearth requires Spark (Fire already awake), so a fixture's contribution
+ * always lands on an awake element.
  */
 export function essenceBase(state: GameState): Partial<Record<ElementId, number>> {
   const base: Partial<Record<ElementId, number>> = {};
@@ -26,6 +29,10 @@ export function essenceBase(state: GameState): Partial<Record<ElementId, number>
         base[e.element] = (base[e.element] ?? 0) + e.trickle;
       }
     }
+  }
+  const home = homeEssenceBase(state);
+  for (const key of Object.keys(home) as ElementId[]) {
+    if (state.run.essence[key]?.awakened) base[key] = (base[key] ?? 0) + (home[key] ?? 0);
   }
   return base;
 }

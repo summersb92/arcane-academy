@@ -5,6 +5,7 @@
 import type { GameState } from './state';
 import { runTasks } from './systems/tasks';
 import { runEssence } from './systems/essence';
+import { runHome } from './systems/home';
 import { runProgression } from './systems/progression';
 
 export const TICK = 0.1; // seconds per fixed step
@@ -22,6 +23,9 @@ export function step(state: GameState, dt: number): void {
 
   // --- essence (cantrip-awakened per-element trickle; not capped in v0.1) ---
   runEssence(state, dt);
+
+  // --- home (Study Desk's passive Insight; runs BEFORE the cap clamp) ---
+  runHome(state, dt);
 
   // --- caps ---
   if (run.resources.insight > run.caps.insight) run.resources.insight = run.caps.insight;

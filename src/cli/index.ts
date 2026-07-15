@@ -29,7 +29,10 @@ import {
 } from '../engine/systems/tasks';
 import { learnCantrip, listCantripInfo, type CantripInfo } from '../engine/systems/skills';
 import { essenceRates } from '../engine/systems/essence';
+import { foundingStatus, foundingSummaryLine } from '../engine/systems/founding';
+import { fixtureLevel } from '../engine/systems/home';
 import { TASK_BY_ID, type TaskDef, type TaskType } from '../content/tasks';
+import { FIXTURES } from '../content/home';
 import { runScenario, type Scenario } from './scenario';
 
 // A hard ceiling on `sim` so an absurd arg (e.g. `sim 1e9`) returns promptly instead of
@@ -95,6 +98,18 @@ function renderActiveTasks(state: GameState): string {
   return `active tasks:\n${lines.join('\n')}`;
 }
 
+/** Home fixture levels + the Founding gate snapshot (once Phase 3 / the lair opens). */
+function renderHomeAndFounding(state: GameState): string[] {
+  if (state.run.flags.lairFounded !== true) return [];
+  const lines: string[] = [];
+  const built = FIXTURES.map((f) => ({ f, lvl: fixtureLevel(state, f.id) })).filter((x) => x.lvl > 0);
+  if (built.length) lines.push(`home: ${built.map((x) => `${x.f.id} L${x.lvl}`).join(' ')}`);
+  const fs = foundingStatus(state);
+  const tag = fs.founded ? ' FOUNDED' : fs.allMet ? ' (gate OPEN)' : '';
+  lines.push(`founding: ${foundingSummaryLine(state)}${tag}`);
+  return lines;
+}
+
 /** Per-second net rates for resources + awakened essence (the #1 "am I producing?" readout). */
 function renderRates(state: GameState): string {
   const fmt = (obj: Record<string, number | undefined>): string =>
@@ -125,6 +140,7 @@ function renderState(state: GameState): string {
     `vitals: life=${v.life.cur.toFixed(1)}/${v.life.max} stamina=${v.stamina.cur.toFixed(1)}/${v.stamina.max} mana=${v.mana.cur.toFixed(1)}/${v.mana.max}`,
     `essence(awakened): ${awakened || '(none)'}`,
     `skills: ${state.run.skills.length ? state.run.skills.join(', ') : '(none)'}`,
+    ...renderHomeAndFounding(state),
     renderActiveTasks(state),
     renderRates(state),
   ].join('\n');

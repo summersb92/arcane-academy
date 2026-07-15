@@ -14,6 +14,32 @@ export const SPARK = {
   timerSeconds: 45, // …or this many seconds of simulated play, guaranteed
 };
 
+/**
+ * The lair beat (Awakening → Hedge-Mage, spec §3.12): a DISTINCT beat AFTER the
+ * spark — once you've begun practising (learned your first cantrip) OR earned a
+ * purse beyond the spark's threshold, you claim a corner as a lair, revealing the
+ * Home tab (fixtures + the Founding card). The Gold arm sits above SPARK.goldThreshold
+ * (25) so crossing the spark can't also trip the lair in the same tick; a purely
+ * idle player who only studies trips the cantrip arm instead. Guaranteed either way.
+ */
+export const LAIR = {
+  goldThreshold: 40,
+};
+
+/**
+ * The Founding (spec §3.11 / §5) — the v0.1 finale gate. Four requirements: hold
+ * enough Gold and Renown, and have acquired a Charter and a Site (each bought
+ * in-run as its own Housing task). The Site is the big Gold sink; the Charter needs
+ * a name (Renown) behind it. Tuned toward the ~15–40 min target — balance freely.
+ */
+export const FOUNDING = {
+  goldHeld: 100, // ⦿ you must still hold at the moment of Founding
+  renown: 25, // ★ the world must know your name
+  charterCost: 60, // ⦿ to secure a Guild Charter
+  charterRenown: 8, // ★ before a guild will charter you
+  siteCost: 120, // ⦿ to claim the Ruined Tower (the big Gold sink → your Grounds)
+};
+
 export const STARTING = {
   gold: 0,
   insight: 0,

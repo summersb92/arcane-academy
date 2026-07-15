@@ -11,6 +11,9 @@
 // Continuous tasks (running/perpetual/limited) each occupy an Activity slot; instant don't.
 
 import type { ElementId, ResourceId } from '../engine/state';
+import { CONTRACTS } from './contracts';
+import { HOME_TASKS } from './home';
+import { FOUNDING_TASKS } from './founding';
 
 export type TaskType = 'instant' | 'running' | 'perpetual' | 'limited';
 
@@ -38,7 +41,8 @@ export type Requirement =
 export type TaskEffect =
   | { kind: 'activitySlot'; amount: number }
   | { kind: 'flag'; flag: string; value?: boolean }
-  | { kind: 'raiseInsightCap'; amount: number };
+  | { kind: 'raiseInsightCap'; amount: number }
+  | { kind: 'awakenElement'; element: ElementId }; // Home Ossuary awakens ☾ Dark on build (T-006)
 
 /** "At N" repeat-scaling: once completions reach `at`, each completion's primary
  *  output gains `bonus` (additive; multiple thresholds stack). docs/10 §4. */
@@ -51,8 +55,9 @@ export interface TaskDef {
   id: string;
   name: string;
   type: TaskType;
-  tag: string; // category label (docs/10 §5)
+  tag: string; // category label (docs/10 §5) — also the raw group the UI splits on (Contract/Fixture/Founding)
   cls: string; // coloured left-edge / element class — matches a CSS var name (gold, insight, fire, dark…)
+  panel?: 'main' | 'home'; // which tab hosts the card (default 'main'; fixtures + the Founding → 'home') — T-006
   chip?: string; // chip label override; defaults from type
   length?: number; // seconds — running & timed-limited
   max?: number; // limited: how many times it can ever complete
@@ -67,8 +72,9 @@ export interface TaskDef {
 
 const A = (pool: Pool, id: AmountId, amount: number): Amount => ({ pool, id, amount });
 
-/** v0.1 starter tasks (spec §5 — first-pass numbers, tuned toward the ~15–40 min target). */
-export const TASKS: TaskDef[] = [
+/** v0.1 core tasks (spec §5 — first-pass numbers, tuned toward the ~15–40 min target).
+ *  Contracts, Home fixtures, and the Founding are composed onto the end (see TASKS). */
+const CORE_TASKS: TaskDef[] = [
   {
     id: 'clean-stables',
     name: 'Clean Stables',
@@ -143,6 +149,11 @@ export const TASKS: TaskDef[] = [
     effects: [{ kind: 'raiseInsightCap', amount: 150 }], // Insight cap 100 → 250 (exercises caps + the `*` marker)
   },
 ];
+
+/** The full task table the engine iterates: core loop + Renown contracts + Home
+ *  fixtures + the Founding finale. Composed here so content stays split by concern
+ *  while there remains ONE source of truth the systems + CLI + UI all read. */
+export const TASKS: TaskDef[] = [...CORE_TASKS, ...CONTRACTS, ...HOME_TASKS, ...FOUNDING_TASKS];
 
 export const TASK_BY_ID: Record<string, TaskDef> = Object.fromEntries(TASKS.map((t) => [t.id, t]));
 

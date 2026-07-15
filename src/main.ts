@@ -2,7 +2,7 @@
 import './app.css';
 import App from './ui/App.svelte';
 import { applyTheme, loadTheme } from './ui/theme';
-import { getState, setState, startLoop, publish, resumeTimebase } from './ui/stores';
+import { getState, setState, startLoop, publish, resumeTimebase, offlineSummary } from './ui/stores';
 import { newGame } from './engine/state';
 import { applyOffline } from './engine/offline';
 import { safeLoad, serialize, LOCALSTORAGE_KEY } from './engine/save';
@@ -40,7 +40,8 @@ function catchUp(where: string): void {
   if (summary.appliedMs > 1000 && Object.keys(summary.gains).length > 0) {
     const mins = Math.round(summary.appliedMs / 60000);
     console.info(`[offline] ${where} ~${mins} min${summary.capped ? ' (capped)' : ''}:`, summary.gains);
-    // The "While you were away…" panel consumes this summary in T-006.
+    // Publish for the "While you were away…" panel (T-006b builds the UI from this).
+    offlineSummary.set(summary);
   }
 }
 catchUp('away');

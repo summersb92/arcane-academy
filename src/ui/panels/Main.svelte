@@ -2,6 +2,7 @@
   import { game, activeTab, dispatchTask, toggleTaskRepeat } from '../stores';
   import type { TaskView } from '../stores';
   import Skills from './Skills.svelte';
+  import Home from './Home.svelte';
 
   // Whole-card click hook (foundation left this for T-004). Defaults to the store dispatcher.
   export let onTask: (t: TaskView) => void = dispatchTask;
@@ -13,8 +14,9 @@
     }
   }
 
-  $: active = $game.tasks.filter((t) => t.active);
-  $: available = $game.tasks.filter((t) => !t.active);
+  // Home-panel tasks (fixtures + the Founding) render on the Home tab, not here.
+  $: active = $game.tasks.filter((t) => t.active && t.panel !== 'home');
+  $: available = $game.tasks.filter((t) => !t.active && t.panel !== 'home');
 </script>
 
 <main>
@@ -114,9 +116,26 @@
   {:else if $activeTab === 'skills'}
     <Skills />
   {:else if $activeTab === 'home'}
+    <Home />
+  {:else if $activeTab === 'academy'}
     <section>
-      <h2>Home</h2>
-      <div class="sub">Your lair. Furnish fixtures for passive bonuses; hosts the Founding progress. (T-006)</div>
+      {#if $game.founding.founded}
+        <h2>Academy · Founded ★</h2>
+        <div class="finale">
+          <p class="lede">You founded the Academy.</p>
+          <p>
+            The lair becomes its first room; your cantrips become the Headmaster's kit; your Gold, Renown,
+            Insight and mana carry over. Word travels the valley — students are already on the road.
+          </p>
+          <p class="tbc">
+            <strong>Act II — the Academy</strong> (rooms, students, faculty, the Research web, contracts at
+            scale) arrives in <strong>v0.2</strong>. This is where Act I ends. Thank you for playing the slice.
+          </p>
+        </div>
+      {:else}
+        <h2>Academy</h2>
+        <div class="sub">Locked until the Founding — your beacon. Found your Academy (on Home) to begin Act II.</div>
+      {/if}
     </section>
   {:else}
     <section>
@@ -145,6 +164,22 @@
   }
   .tcard.cant {
     opacity: 0.85;
+  }
+  .finale {
+    color: var(--dim);
+    font-size: 13px;
+    line-height: 1.6;
+    max-width: 52ch;
+  }
+  .finale .lede {
+    color: var(--renown);
+    font-size: 16px;
+    font-weight: 600;
+    margin: 4px 0 8px;
+  }
+  .finale .tbc {
+    margin-top: 12px;
+    color: var(--ink);
   }
   .repeat {
     align-self: flex-start;
