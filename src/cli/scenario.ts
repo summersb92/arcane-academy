@@ -4,6 +4,7 @@
 
 import { newGame, type GameState } from '../engine/state';
 import { simulate } from '../engine/tick';
+import { doTask, startTask, stopTask } from '../engine/systems/tasks';
 
 export type Op = '>=' | '<=' | '>' | '<' | '==' | '!=';
 
@@ -15,7 +16,10 @@ export interface Scenario {
 
 export type Step =
   | { sim: number }
-  | { assert: { path: string; op: Op; value: number } }
+  | { do: string }
+  | { start: string }
+  | { stop: string }
+  | { assert: { path: string; op: Op; value: number | boolean } }
   | { note: string };
 
 export interface StepResult {
@@ -41,23 +45,34 @@ export function resolvePath(obj: unknown, path: string): unknown {
   }, obj);
 }
 
-function compare(actual: number, op: Op, expected: number): boolean {
+function compare(actual: unknown, op: Op, expected: number | boolean): boolean {
+  if (typeof expected === 'boolean') {
+    const a = Boolean(actual);
+    if (op === '==') return a === expected;
+    if (op === '!=') return a !== expected;
+    return false; // ordering ops are meaningless for booleans
+  }
+  const a = typeof actual === 'number' ? actual : NaN;
   switch (op) {
     case '>=':
-      return actual >= expected;
+      return a >= expected;
     case '<=':
-      return actual <= expected;
+      return a <= expected;
     case '>':
-      return actual > expected;
+      return a > expected;
     case '<':
-      return actual < expected;
+      return a < expected;
     case '==':
-      return actual === expected;
+      return a === expected;
     case '!=':
-      return actual !== expected;
+      return a !== expected;
     default:
       return false;
   }
+}
+
+function fmtActual(raw: unknown): string {
+  return typeof raw === 'number' ? raw.toFixed(4) : String(raw);
 }
 
 export function runScenario(spec: Scenario): ScenarioResult {
@@ -68,16 +83,20 @@ export function runScenario(spec: Scenario): ScenarioResult {
     if ('sim' in step) {
       simulate(state, step.sim);
       results.push({ ok: true, desc: `sim ${step.sim}s`, detail: `playtime=${state.playtime.toFixed(1)}s` });
+    } else if ('do' in step) {
+      const ok = doTask(state, step.do);
+      results.push({ ok: true, desc: `do ${step.do}`, detail: ok ? 'ok' : 'refused' });
+    } else if ('start' in step) {
+      const ok = startTask(state, step.start);
+      results.push({ ok: true, desc: `start ${step.start}`, detail: ok ? 'ok' : 'refused' });
+    } else if ('stop' in step) {
+      const ok = stopTask(state, step.stop);
+      results.push({ ok: true, desc: `stop ${step.stop}`, detail: ok ? 'ok' : 'refused' });
     } else if ('assert' in step) {
       const { path, op, value } = step.assert;
       const raw = resolvePath(state, path);
-      const actual = typeof raw === 'number' ? raw : NaN;
-      const ok = compare(actual, op, value);
-      results.push({
-        ok,
-        desc: `assert ${path} ${op} ${value}`,
-        detail: `actual=${Number.isFinite(actual) ? actual.toFixed(4) : String(raw)}`,
-      });
+      const ok = compare(raw, op, value);
+      results.push({ ok, desc: `assert ${path} ${op} ${value}`, detail: `actual=${fmtActual(raw)}` });
     } else if ('note' in step) {
       results.push({ ok: true, desc: `note: ${step.note}` });
     } else {

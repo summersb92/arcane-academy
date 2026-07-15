@@ -25,6 +25,8 @@ import {
   safeLoad,
 } from '../engine/save';
 import { formatNumber } from '../engine/format';
+import { doTask, startTask, stopTask, listTaskInfo } from '../engine/systems/tasks';
+import { TASK_BY_ID } from '../content/tasks';
 import { runScenario, type Scenario } from './scenario';
 
 interface Args {
@@ -70,6 +72,38 @@ function renderState(state: GameState): string {
 
 function printState(state: GameState, json: boolean): void {
   console.log(json ? JSON.stringify(state, null, 2) : renderState(state));
+}
+
+function renderTasks(state: GameState): string {
+  return listTaskInfo(state)
+    .map((info) => {
+      const def = TASK_BY_ID[info.id];
+      const marks =
+        [info.active && 'active', info.paused && 'paused', info.locked && 'locked'].filter(Boolean).join(',') || '-';
+      const prog = def.length ? ` ${Math.round(info.progress * 100)}%` : '';
+      return `  ${info.id.padEnd(14)} ${def.type.padEnd(9)} ${marks}${prog}  ${def.name}`;
+    })
+    .join('\n');
+}
+
+type TaskVerb = 'do' | 'start' | 'stop';
+const TASK_FN: Record<TaskVerb, (s: GameState, id: string) => boolean> = {
+  do: doTask,
+  start: startTask,
+  stop: stopTask,
+};
+
+function cmdTaskAction(args: Args, verb: TaskVerb): number {
+  const id = args.positional[0];
+  if (!id) {
+    console.error(`usage: ${verb} <taskId>   (see 'tasks' for ids)`);
+    return 1;
+  }
+  const state = freshState(args.seed);
+  const ok = TASK_FN[verb](state, id);
+  console.log(`# ${verb} ${id}: ${ok ? 'ok' : 'refused'} (seed ${state.seed})`);
+  printState(state, args.json);
+  return ok ? 0 : 1;
 }
 
 function cmdSim(args: Args): number {
@@ -119,7 +153,7 @@ function cmdRun(args: Args): number {
 function cmdRepl(args: Args): number {
   const state = freshState(args.seed);
   const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: 'aa> ' });
-  console.log('Arcane Academy REPL — commands: state, sim <sec>, export, help, quit');
+  console.log('Arcane Academy REPL — commands: state, tasks, do/start/stop <id>, sim <sec>, export, help, quit');
   rl.prompt();
   rl.on('line', (line) => {
     const [c, arg] = line.trim().split(/\s+/);
@@ -129,6 +163,19 @@ function cmdRepl(args: Args): number {
       case 'state':
         console.log(renderState(state));
         break;
+      case 'tasks':
+        console.log(renderTasks(state));
+        break;
+      case 'do':
+      case 'start':
+      case 'stop': {
+        if (!arg) {
+          console.log(`usage: ${c} <taskId>`);
+          break;
+        }
+        console.log(`${c} ${arg}: ${TASK_FN[c](state, arg) ? 'ok' : 'refused'}`);
+        break;
+      }
       case 'sim': {
         const secs = Number(arg);
         if (Number.isFinite(secs)) {
@@ -141,7 +188,7 @@ function cmdRepl(args: Args): number {
         console.log(exportString(state));
         break;
       case 'help':
-        console.log('state | sim <sec> | export | quit');
+        console.log('state | tasks | do/start/stop <id> | sim <sec> | export | quit');
         break;
       case 'quit':
       case 'exit':
@@ -166,6 +213,17 @@ function main(): number {
 
     case 'sim':
       return cmdSim(args);
+
+    case 'tasks':
+      console.log(renderTasks(freshState(args.seed)));
+      return 0;
+
+    case 'do':
+      return cmdTaskAction(args, 'do');
+    case 'start':
+      return cmdTaskAction(args, 'start');
+    case 'stop':
+      return cmdTaskAction(args, 'stop');
 
     case 'export':
       console.log(exportString(freshState(args.seed)));
@@ -240,6 +298,8 @@ function main(): number {
           'Usage: npm run cli -- <command> [args]',
           '',
           '  state [--json] [--seed N]      dump resources, vitals, essence, phase',
+          '  tasks [--seed N]               list task ids, types, and status',
+          '  do|start|stop <id> [--seed N]  drive a task action, then print state (exit 0 ok / 1 refused)',
           '  sim <seconds> [--seed N] [--json]   fast-forward the deterministic tick loop',
           '  export [--seed N]              print a portable save string (clipboard format)',
           '  import <string> [--json]       load a save string and print state',

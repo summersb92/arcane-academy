@@ -28,6 +28,7 @@ export interface TaskRuntime {
   progress: number; // 0..1 for timed tasks
   paused: boolean;
   count: number; // completions (for At-N scaling, T-004)
+  repeat: boolean; // running tasks: restart on completion (the in-card ↻ toggle)
 }
 
 export interface ChronicleEntry {
@@ -44,6 +45,7 @@ export interface RunState {
   vitals: { life: Vital; stamina: Vital; mana: Vital };
   essence: Record<ElementId, EssenceState>;
   tasks: Record<string, TaskRuntime>; // T-004
+  activitySlots: number; // continuous-task capacity (starts 2; "Widen the Study" raises to 3) — T-004
   skills: string[]; // learned cantrip ids (T-005)
   home: Record<string, number>; // fixture levels (T-006)
   flags: Record<string, boolean>;
@@ -99,6 +101,7 @@ export function newGame(seed: number = seedFrom(Date.now())): GameState {
       },
       essence: freshEssence(),
       tasks: {},
+      activitySlots: STARTING.activitySlots,
       skills: [],
       home: {},
       flags: {},

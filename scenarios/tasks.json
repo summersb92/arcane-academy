@@ -1,0 +1,18 @@
+{
+  "name": "tasks",
+  "seed": 1,
+  "steps": [
+    { "note": "start Study (perpetual): occupies an Activity slot and trickles Insight" },
+    { "start": "study" },
+    { "assert": { "path": "run.tasks.study.active", "op": "==", "value": true } },
+    { "assert": { "path": "run.tasks.study.paused", "op": "==", "value": false } },
+    { "sim": 30 },
+    { "note": "Insight advanced from Study (0.55/s → ~16.5 over 30s, under the 100 cap)" },
+    { "assert": { "path": "run.resources.insight", "op": ">=", "value": 16 } },
+    { "note": "the running task still occupies a slot (Study did not auto-pause: regen > drain)" },
+    { "assert": { "path": "run.tasks.study.active", "op": "==", "value": true } },
+    { "note": "instant task works alongside the running one" },
+    { "do": "clean-stables" },
+    { "assert": { "path": "run.resources.gold", "op": ">=", "value": 2.5 } }
+  ]
+}

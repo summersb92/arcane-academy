@@ -12,15 +12,11 @@ export const STARTING = {
   ironOre: 0,
   spiritDust: 0,
   insightCap: 100,
+  activitySlots: 2, // continuous-task capacity at the Origin (raised to 3 by "Widen the Study")
   life: { cur: 20, max: 20, regen: 0.2 },
   stamina: { cur: 10, max: 10, regen: 0.5 },
   mana: { cur: 0, max: 10, regen: 0.2 },
 };
 
-// T-002 stub: a single hard-coded generator so a resource visibly ticks.
-// Replaced by the Task/Activity system in T-004 (this is the "found coins in
-// the straw" trickle that proves the tick + offline + save loop end-to-end).
-export const PLACEHOLDER_GENERATOR = {
-  resource: 'gold' as const,
-  rate: 0.5, // gold per second
-};
+// (The T-002 placeholder generator was retired in T-004 — production now flows
+// entirely from the Task/Activity system in src/engine/systems/tasks.ts.)

@@ -4,9 +4,10 @@
   "steps": [
     { "note": "fresh game starts penniless" },
     { "assert": { "path": "run.resources.gold", "op": "==", "value": 0 } },
+    { "note": "Clean Stables (instant): stamina 1 -> gold 2.5" },
+    { "do": "clean-stables" },
+    { "assert": { "path": "run.resources.gold", "op": ">=", "value": 2.5 } },
     { "sim": 60 },
-    { "note": "the hard-coded generator (0.5 gold/s) advanced the resource" },
-    { "assert": { "path": "run.resources.gold", "op": ">=", "value": 25 } },
     { "assert": { "path": "playtime", "op": ">=", "value": 60 } }
   ]
 }

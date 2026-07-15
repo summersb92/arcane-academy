@@ -3,23 +3,24 @@ import { newGame } from '../src/engine/state';
 import { simulate, step } from '../src/engine/tick';
 import { serialize, deserialize, safeLoad, exportString, importString } from '../src/engine/save';
 import { applyOffline } from '../src/engine/offline';
-import { PLACEHOLDER_GENERATOR, OFFLINE_CAP_MS } from '../src/content/config';
+import { OFFLINE_CAP_MS } from '../src/content/config';
+import { startTask } from '../src/engine/systems/tasks';
 import { formatNumber } from '../src/engine/format';
 
 describe('production math', () => {
-  it('generator advances the resource by rate * seconds', () => {
+  it('an active perpetual task advances its resource by rate * seconds', () => {
     const s = newGame(123);
-    const start = s.run.resources[PLACEHOLDER_GENERATOR.resource];
+    startTask(s, 'study'); // perpetual: Insight +0.55/s (Stamina drain sustained by regen)
     simulate(s, 60);
-    const got = s.run.resources[PLACEHOLDER_GENERATOR.resource] - start;
-    expect(got).toBeCloseTo(PLACEHOLDER_GENERATOR.rate * 60, 4);
+    expect(s.run.resources.insight).toBeCloseTo(0.55 * 60, 4);
     expect(s.playtime).toBeCloseTo(60, 4);
   });
 
   it('a single step scales by dt', () => {
     const s = newGame(1);
+    startTask(s, 'study');
     step(s, 2);
-    expect(s.run.resources.gold).toBeCloseTo(PLACEHOLDER_GENERATOR.rate * 2, 6);
+    expect(s.run.resources.insight).toBeCloseTo(0.55 * 2, 6);
   });
 
   it('vitals regen toward max and never overshoot', () => {
@@ -62,20 +63,22 @@ describe('save round-trip', () => {
 describe('offline catch-up', () => {
   it('advances resources for elapsed time', () => {
     const s = newGame(1);
+    startTask(s, 'study'); // perpetual Insight producer drives the offline gains
     s.lastSaved = Date.now() - 60_000; // 60s ago
     const summary = applyOffline(s, Date.now());
-    expect(summary.gains.gold).toBeCloseTo(PLACEHOLDER_GENERATOR.rate * 60, 2);
+    expect(summary.gains.insight).toBeCloseTo(0.55 * 60, 2);
     expect(summary.capped).toBe(false);
   });
 
   it('caps very long absences at the offline cap', () => {
     const s = newGame(1);
+    startTask(s, 'study');
     s.lastSaved = Date.now() - OFFLINE_CAP_MS * 3;
     const summary = applyOffline(s, Date.now());
     expect(summary.capped).toBe(true);
     expect(summary.appliedMs).toBe(OFFLINE_CAP_MS);
-    expect(Number.isFinite(s.run.resources.gold)).toBe(true);
-    expect(s.run.resources.gold).toBeGreaterThan(0);
+    expect(Number.isFinite(s.run.resources.insight)).toBe(true);
+    expect(s.run.resources.insight).toBeGreaterThan(0);
   });
 });
 

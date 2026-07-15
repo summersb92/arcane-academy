@@ -2,8 +2,8 @@
 // so the same step() runs in the browser rAF loop, in `simulate()` for tests, and
 // in the CLI headlessly. The real-time driver (requestAnimationFrame) lives in the UI.
 
-import { PLACEHOLDER_GENERATOR } from '../content/config';
 import type { GameState } from './state';
+import { runTasks } from './systems/tasks';
 
 export const TICK = 0.1; // seconds per fixed step
 export const MAX_CATCHUP_STEPS = 100_000; // bounds a single advance()
@@ -15,8 +15,8 @@ export const MAX_CATCHUP_STEPS = 100_000; // bounds a single advance()
 export function step(state: GameState, dt: number): void {
   const run = state.run;
 
-  // --- production (T-002 stub generator; T-004 replaces with the Task system) ---
-  run.resources[PLACEHOLDER_GENERATOR.resource] += PLACEHOLDER_GENERATOR.rate * dt;
+  // --- tasks (the Task/Activity system drives all production; runs before caps) ---
+  runTasks(state, dt);
 
   // --- caps ---
   if (run.resources.insight > run.caps.insight) run.resources.insight = run.caps.insight;
