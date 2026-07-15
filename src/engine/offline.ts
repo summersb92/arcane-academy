@@ -3,7 +3,7 @@
 
 import { OFFLINE_CAP_MS } from '../content/config';
 import type { GameState, ResourceId } from './state';
-import { step } from './tick';
+import { advanceFixed } from './tick';
 
 export interface OfflineSummary {
   elapsedMs: number; // real time elapsed since lastSaved
@@ -12,23 +12,20 @@ export interface OfflineSummary {
   gains: Partial<Record<ResourceId, number>>;
 }
 
-const COARSE_DT = 1; // 1s steps: linear generators are exact, and 12h stays fast
-
 /**
  * Advance `state` by the (capped) time since `lastSaved`. Mutates state, bumps
  * lastSaved to `now`, and returns a summary. Safe for zero/negative elapsed.
+ *
+ * Stepping is delegated to tick.advanceFixed at TICK granularity — the SAME
+ * routine `simulate()` uses — so offline catch-up and fast-forward stay identical
+ * (a task that auto-pauses in live play auto-pauses here too; no coarse-step drift).
  */
 export function applyOffline(state: GameState, now: number = Date.now()): OfflineSummary {
   const rawElapsed = Math.max(0, now - state.lastSaved);
   const appliedMs = Math.min(rawElapsed, OFFLINE_CAP_MS);
   const before = { ...state.run.resources };
 
-  let remaining = appliedMs / 1000;
-  while (remaining > 1e-9) {
-    const dt = Math.min(COARSE_DT, remaining);
-    step(state, dt);
-    remaining -= dt;
-  }
+  advanceFixed(state, appliedMs / 1000);
   state.lastSaved = now;
 
   const gains: Partial<Record<ResourceId, number>> = {};

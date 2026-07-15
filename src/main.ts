@@ -2,7 +2,7 @@
 import './app.css';
 import App from './ui/App.svelte';
 import { applyTheme, loadTheme } from './ui/theme';
-import { getState, setState, startLoop } from './ui/stores';
+import { getState, setState, startLoop, publish, resumeTimebase } from './ui/stores';
 import { newGame } from './engine/state';
 import { applyOffline } from './engine/offline';
 import { safeLoad, serialize, LOCALSTORAGE_KEY } from './engine/save';
@@ -35,12 +35,15 @@ if (loaded.ok && loaded.state) {
 }
 
 // ---- offline catch-up ----
-const summary = applyOffline(getState());
-if (summary.appliedMs > 1000 && Object.keys(summary.gains).length > 0) {
-  const mins = Math.round(summary.appliedMs / 60000);
-  console.info(`[offline] away ~${mins} min${summary.capped ? ' (capped)' : ''}:`, summary.gains);
-  // The "While you were away…" panel consumes this summary in T-006.
+function catchUp(where: string): void {
+  const summary = applyOffline(getState());
+  if (summary.appliedMs > 1000 && Object.keys(summary.gains).length > 0) {
+    const mins = Math.round(summary.appliedMs / 60000);
+    console.info(`[offline] ${where} ~${mins} min${summary.capped ? ' (capped)' : ''}:`, summary.gains);
+    // The "While you were away…" panel consumes this summary in T-006.
+  }
 }
+catchUp('away');
 
 // ---- persistence ----
 function save(): void {
@@ -54,10 +57,27 @@ function save(): void {
   }
 }
 
-setInterval(save, AUTOSAVE_INTERVAL_MS);
+// Autosave, but NOT while the tab is hidden: the rAF sim loop is paused then, so the
+// sim is NOT keeping up with wall-clock — bumping lastSaved would swallow the idle gap
+// that the visibility handler below needs to replay on return.
+setInterval(() => {
+  if (document.visibilityState !== 'hidden') save();
+}, AUTOSAVE_INTERVAL_MS);
 window.addEventListener('beforeunload', save);
-window.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') save();
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    // Sim is current up to now; persist and freeze lastSaved for the gap.
+    save();
+  } else {
+    // Back to foreground: the rAF loop was paused while hidden, so its ≤1s frame
+    // clamp would silently drop the whole idle gap. Replay it as offline catch-up
+    // ONCE, re-seed the loop timebase (so the resumed frame adds ~0, no double-count),
+    // then reflect the gains immediately.
+    catchUp('foreground');
+    resumeTimebase();
+    publish();
+  }
 });
 
 // ---- mount + run ----

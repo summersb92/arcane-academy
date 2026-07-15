@@ -34,16 +34,33 @@ function regen(v: { cur: number; max: number; regen: number }, dt: number): void
 }
 
 /**
+ * THE non-realtime stepping routine. Advances `state` by exactly `seconds` in
+ * fixed TICK-sized steps (plus a final sub-TICK remainder), so a long advance is
+ * NEVER collapsed into one oversized step — timed tasks, auto-pause, and regen all
+ * behave identically to fine-grained live play. Both `simulate()` (test/CLI
+ * fast-forward) and offline catch-up route through here, keeping them bit-for-bit
+ * consistent (see offline.ts).
+ *
+ * There is NO iteration cap here: this is the *intentional* fast-forward, not the
+ * live-loop spiral guard (that lives in createAccumulator's MAX_CATCHUP_STEPS).
+ * Callers bound the DURATION instead — offline by OFFLINE_CAP_MS, the CLI by its arg.
+ */
+export function advanceFixed(state: GameState, seconds: number): void {
+  if (seconds <= 0 || !Number.isFinite(seconds)) return;
+  // +epsilon so a clean multiple (e.g. 10800/0.1) floors to the exact tick count
+  // instead of one-short from 0.1's binary representation.
+  const whole = Math.floor(seconds / TICK + 1e-9);
+  for (let i = 0; i < whole; i++) step(state, TICK);
+  const remainder = seconds - whole * TICK;
+  if (remainder > 1e-9) step(state, remainder);
+}
+
+/**
  * Headless deterministic fast-forward: run `seconds` in exact TICK increments.
  * Returns the same state object (mutated) for convenience.
  */
 export function simulate(state: GameState, seconds: number): GameState {
-  if (seconds <= 0) return state;
-  let steps = Math.floor(seconds / TICK);
-  if (steps > MAX_CATCHUP_STEPS) steps = MAX_CATCHUP_STEPS;
-  for (let i = 0; i < steps; i++) step(state, TICK);
-  const remainder = seconds - steps * TICK;
-  if (remainder > 1e-9) step(state, remainder);
+  advanceFixed(state, seconds);
   return state;
 }
 

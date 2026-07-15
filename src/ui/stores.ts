@@ -170,8 +170,9 @@ function payoffText(def: TaskDef, info: TaskInfo): string {
 function atNText(def: TaskDef, count: number): string | undefined {
   if (!def.atN || !def.atN.length) return undefined;
   const t = def.atN.find((x) => count < x.at) ?? def.atN[def.atN.length - 1];
-  if (count < t.at) return `At ${t.at}: +${t.bonus} (${count}/${t.at})`;
-  return `At ${t.at}: +${t.bonus} ✓ · ×${count}`;
+  // Bonus applies once completions reach `at`. Read as a plain goal → reward.
+  if (count < t.at) return `At ${t.at} done → +${t.bonus} (${count}/${t.at})`;
+  return `At ${t.at} done → +${t.bonus} ✓ (×${count})`;
 }
 function lockTextFor(def: TaskDef, info: TaskInfo): string | undefined {
   if (info.maxed) return `done · ${info.count}/${def.max ?? 1}`;
@@ -283,6 +284,7 @@ export function toggleTaskRepeat(id: string): void {
 }
 
 let running = false;
+let lastFrame = 0; // performance.now() timebase for the rAF loop (module-scoped so it can be re-seeded)
 
 /** Start the real-time loop: rAF feeds wall-time into the engine accumulator. */
 export function startLoop(): void {
@@ -291,12 +293,12 @@ export function startLoop(): void {
   setNotation(state.settings.notation);
 
   const acc = createAccumulator();
-  let last = performance.now();
+  lastFrame = performance.now();
   let sincePublish = 0;
 
   const frame = (now: number): void => {
-    const elapsed = (now - last) / 1000;
-    last = now;
+    const elapsed = (now - lastFrame) / 1000;
+    lastFrame = now;
     acc.advance(state, Math.min(elapsed, 1)); // clamp huge gaps (tab was backgrounded)
     sincePublish += elapsed;
     if (sincePublish >= 0.1) {
@@ -307,4 +309,15 @@ export function startLoop(): void {
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
+}
+
+/**
+ * Re-seed the rAF timebase to "now" so the next frame measures ~0 elapsed.
+ * Call this right after a foreground offline catch-up (main.ts visibilitychange):
+ * while the tab was hidden rAF was paused and `lastFrame` froze, so without this
+ * the first resumed frame would see the whole idle gap and (even clamped to ≤1s)
+ * double-count time the catch-up already replayed.
+ */
+export function resumeTimebase(): void {
+  if (typeof performance !== 'undefined') lastFrame = performance.now();
 }

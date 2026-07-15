@@ -36,3 +36,22 @@ export function createRng(initialState: number): Rng {
     state: () => a >>> 0,
   };
 }
+
+/**
+ * THE randomness rule for T-005/T-006 (contracts, hunts — anything that rolls):
+ * NEVER keep a long-lived Rng across draws. Reconstruct from the persisted
+ * `state.rngState`, draw, and write the advanced state straight back — so the
+ * stream is deterministic AND survives save/load (a reloaded save continues the
+ * exact same sequence). This helper is that reconstruct→draw→write-back in one call.
+ *
+ *   const roll = drawRng(state, (r) => r.int(1, 6));   // advances & persists rngState
+ *
+ * Typed structurally (`{ rngState }`) rather than against GameState to avoid a
+ * state.ts ↔ rng.ts import cycle.
+ */
+export function drawRng<T>(state: { rngState: number }, draw: (rng: Rng) => T): T {
+  const rng = createRng(state.rngState);
+  const result = draw(rng);
+  state.rngState = rng.state();
+  return result;
+}

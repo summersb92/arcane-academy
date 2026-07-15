@@ -98,9 +98,11 @@ function canAfford(state: GameState, costs: Amount[] | undefined, scale: number)
 function freshRuntime(): TaskRuntime {
   return { active: false, progress: 0, paused: false, count: 0, repeat: false };
 }
-/** Read-only view of a runtime — never mutates state (safe during render). */
+/** Read-only view of a runtime — never mutates state (safe during render).
+ *  `tasks?.` guards the render path: toView() can run on a freshly-loaded save
+ *  before the first tick's self-heal, and a legacy/partial save may lack run.tasks. */
 function peekRuntime(state: GameState, id: string): TaskRuntime {
-  return state.run.tasks[id] ?? freshRuntime();
+  return state.run.tasks?.[id] ?? freshRuntime();
 }
 /** Get-or-create the stored runtime — for action paths only. */
 function getRuntime(state: GameState, id: string): TaskRuntime {

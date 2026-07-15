@@ -4,7 +4,8 @@
 // so a file the browser downloads loads via `cli load` and vice-versa.
 // No DOM, no Svelte — the DOM download/upload is a thin UI adapter over this.
 
-import { SAVE_VERSION, type GameState } from './state';
+import { STARTING } from '../content/config';
+import { ELEMENTS, SAVE_VERSION, type ElementId, type GameState, type ResourceId } from './state';
 
 export const SAVE_MAGIC = 'arcane-academy-save';
 export const SAVE_FILE_EXT = '.aasave';
@@ -48,6 +49,9 @@ export function deserialize(text: string): GameState {
     throw new Error(`Save is from a newer version (${parsed.version} > ${SAVE_VERSION}).`);
   }
 
+  // Backfill missing structure FIRST (so read models never see `undefined`), then
+  // reject anything left that is structurally present but garbage (NaN / wrong type).
+  normalize(state);
   validate(state);
   return state;
 }
@@ -68,13 +72,31 @@ export function safeLoad(text: string | null | undefined): LoadResult {
   }
 }
 
-/** Versioned migration ladder. Stub for v0.1 (only version 1 exists). */
+/**
+ * Versioned migration ladder — one `vN → vN+1` step per rung, applied in order.
+ * Real (not a no-op) even though only v1 ships today: a pre-current (v0) envelope
+ * upgrades through migrate0to1. `normalize()` runs AFTER this to backfill anything
+ * a step didn't touch, so each rung only needs to handle its own shape delta.
+ */
 export function migrate(state: GameState, fromVersion: number): GameState {
   let s = state;
   let v = fromVersion;
-  // while (v === 0) { s = migrate0to1(s); v = 1; }  // example future step
+  if (v < 1) {
+    s = migrate0to1(s);
+    v = 1;
+  }
+  // future: if (v === 1) { s = migrate1to2(s); v = 2; }
   void v;
   s.version = SAVE_VERSION;
+  return s;
+}
+
+/** v0 → v1: the pre-release format predates the Task/Activity system (T-004).
+ *  Establish its containers so v1 read models resolve; normalize() fills the rest. */
+function migrate0to1(s: GameState): GameState {
+  const run = (s.run ??= {} as GameState['run']);
+  run.tasks ??= {};
+  if (typeof run.activitySlots !== 'number') run.activitySlots = STARTING.activitySlots;
   return s;
 }
 
@@ -107,20 +129,94 @@ function peekVersion(text: string): number | undefined {
   }
 }
 
-/** Light structural + finiteness check — guards against NaN/garbage silently loading. */
+const RESOURCE_IDS: ResourceId[] = ['gold', 'insight', 'renown', 'moonpetal', 'ironOre', 'spiritDust'];
+const VITAL_IDS = ['life', 'stamina', 'mana'] as const;
+
+/**
+ * Fill defaults for every `run.*` field a read model touches, so `toView()` (which
+ * runs on the initial setState/publish, BEFORE the first tick's self-heal) never
+ * dereferences `undefined`. Only fills *absent* containers/keys — a present-but-
+ * malformed value (e.g. a `{}` vital) is left for `validate()` to reject, never
+ * silently guessed. Idempotent on a complete save. Exported for the migrate ladder
+ * and tests.
+ */
+export function normalize(state: GameState): void {
+  const run = state?.run;
+  if (!run || typeof run !== 'object') return; // validate() will reject a missing run
+
+  // containers the read models iterate/spread — undefined here would throw on render
+  run.tasks ??= {};
+  run.flags ??= {};
+  run.home ??= {};
+  run.skills ??= [];
+  run.chronicle ??= [];
+  if (run.phase === undefined) run.phase = 'origin';
+  if (typeof run.act !== 'number') run.act = 1;
+  if (typeof run.activitySlots !== 'number') run.activitySlots = STARTING.activitySlots;
+
+  run.caps ??= { insight: STARTING.insightCap };
+
+  run.resources ??= {} as GameState['run']['resources'];
+  for (const id of RESOURCE_IDS) run.resources[id] ??= 0;
+
+  if (!run.vitals || typeof run.vitals !== 'object') {
+    run.vitals = { life: { ...STARTING.life }, stamina: { ...STARTING.stamina }, mana: { ...STARTING.mana } };
+  } else {
+    run.vitals.life ??= { ...STARTING.life };
+    run.vitals.stamina ??= { ...STARTING.stamina };
+    run.vitals.mana ??= { ...STARTING.mana };
+  }
+
+  if (!run.essence || typeof run.essence !== 'object') {
+    run.essence = {} as GameState['run']['essence'];
+  }
+  for (const id of ELEMENTS as ElementId[]) {
+    if (!run.essence[id] || typeof run.essence[id] !== 'object') {
+      run.essence[id] = { amount: 0, awakened: false };
+    }
+  }
+}
+
+/** Structural + finiteness check — guards against NaN/garbage silently loading. */
 function validate(state: GameState): void {
   const run = state?.run;
   if (!run || typeof run !== 'object') throw new Error('Save missing run state.');
+
   if (!run.resources || typeof run.resources !== 'object') throw new Error('Save missing resources.');
   for (const [k, val] of Object.entries(run.resources)) {
     if (typeof val !== 'number' || !Number.isFinite(val)) {
       throw new Error(`Resource "${k}" is not a finite number.`);
     }
   }
+
   if (!run.vitals?.life || !run.vitals?.stamina || !run.vitals?.mana) {
     throw new Error('Save missing vitals.');
   }
+  for (const key of VITAL_IDS) {
+    const v = run.vitals[key];
+    for (const field of ['cur', 'max', 'regen'] as const) {
+      if (typeof v[field] !== 'number' || !Number.isFinite(v[field])) {
+        throw new Error(`Vital "${key}.${field}" is not a finite number.`);
+      }
+    }
+  }
+
+  if (!run.caps || typeof run.caps.insight !== 'number' || !Number.isFinite(run.caps.insight)) {
+    throw new Error('Save has an invalid insight cap.');
+  }
+
+  if (run.essence && typeof run.essence === 'object') {
+    for (const [id, e] of Object.entries(run.essence)) {
+      if (!e || typeof e.amount !== 'number' || !Number.isFinite(e.amount)) {
+        throw new Error(`Essence "${id}" amount is not a finite number.`);
+      }
+    }
+  }
+
   if (typeof state.playtime !== 'number' || !Number.isFinite(state.playtime)) {
     throw new Error('Save has invalid playtime.');
+  }
+  if (typeof state.lastSaved !== 'number' || !Number.isFinite(state.lastSaved)) {
+    throw new Error('Save has invalid lastSaved.');
   }
 }
