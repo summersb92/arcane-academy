@@ -19,6 +19,7 @@ import { simulate } from '../engine/tick';
 import { serialize, exportString, importString, toFileString, safeLoad } from '../engine/save';
 import { formatNumber } from '../engine/format';
 import { doTask, startTask, stopTask, listTaskInfo } from '../engine/systems/tasks';
+import { learnCantrip, listCantripInfo } from '../engine/systems/skills';
 import { TASK_BY_ID } from '../content/tasks';
 import { runScenario, type Scenario } from './scenario';
 
@@ -79,6 +80,15 @@ function renderTasks(state: GameState): string {
     .join('\n');
 }
 
+function renderSkills(state: GameState): string {
+  return listCantripInfo(state)
+    .map((c) => {
+      const cap = c.exceedsCap ? '*' : '';
+      return `  ${c.id.padEnd(16)} ${c.status.padEnd(9)} ◈${c.cost}${cap}  ${c.name}  (${c.effectText})`;
+    })
+    .join('\n');
+}
+
 type TaskVerb = 'do' | 'start' | 'stop';
 const TASK_FN: Record<TaskVerb, (s: GameState, id: string) => boolean> = {
   do: doTask,
@@ -92,7 +102,7 @@ const TASK_FN: Record<TaskVerb, (s: GameState, id: string) => boolean> = {
 // state (and `state`/`export` reflect the loaded+simmed result). A lone verb is
 // just a pipeline of length 1, so every prior single-command usage still works.
 const PIPE_VERBS = new Set([
-  'state', 'sim', 'tasks', 'do', 'start', 'stop', 'export', 'import', 'save', 'load', 'help', '--help', '-h',
+  'state', 'sim', 'tasks', 'skills', 'do', 'start', 'stop', 'learn', 'export', 'import', 'save', 'load', 'help', '--help', '-h',
 ]);
 
 interface PipeCommand {
@@ -125,7 +135,9 @@ function printHelp(): void {
       '',
       '  state [--json] [--seed N]      dump resources, vitals, essence, phase',
       '  tasks [--seed N]               list task ids, types, and status',
+      '  skills [--seed N]              list cantrip ids, status, and cost',
       '  do|start|stop <id> [--seed N]  drive a task action, then print state (exit 0 ok / 1 refused)',
+      '  learn <cantripId> [--seed N]   learn a cantrip (spends Insight), then print state',
       '  sim <seconds> [--seed N] [--json]   fast-forward the deterministic tick loop',
       '  export [--seed N]              print a portable save string (clipboard format)',
       '  import <string> [--json]       load a save string and print state',
@@ -153,6 +165,10 @@ function runPipeline(commands: PipeCommand[], json: boolean, seed?: number): num
 
       case 'tasks':
         console.log(renderTasks(ensure()));
+        break;
+
+      case 'skills':
+        console.log(renderSkills(ensure()));
         break;
 
       case 'sim': {
@@ -191,6 +207,20 @@ function runPipeline(commands: PipeCommand[], json: boolean, seed?: number): num
         const s = ensure();
         const ok = TASK_FN[verb as TaskVerb](s, id);
         console.log(`# ${verb} ${id}: ${ok ? 'ok' : 'refused'} (seed ${s.seed})`);
+        printState(s, json);
+        if (!ok) code = 1;
+        break;
+      }
+
+      case 'learn': {
+        const id = args[0];
+        if (!id) {
+          console.error("usage: learn <cantripId>   (see 'skills' for ids)");
+          return 1;
+        }
+        const s = ensure();
+        const ok = learnCantrip(s, id);
+        console.log(`# learn ${id}: ${ok ? 'ok' : 'refused'} (seed ${s.seed})`);
         printState(s, json);
         if (!ok) code = 1;
         break;
@@ -292,7 +322,9 @@ function cmdRun(args: Args): number {
 function cmdRepl(args: Args): number {
   const state = freshState(args.seed);
   const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: 'aa> ' });
-  console.log('Arcane Academy REPL — commands: state, tasks, do/start/stop <id>, sim <sec>, export, help, quit');
+  console.log(
+    'Arcane Academy REPL — commands: state, tasks, skills, do/start/stop <id>, learn <id>, sim <sec>, export, help, quit',
+  );
   rl.prompt();
   rl.on('line', (line) => {
     const [c, arg] = line.trim().split(/\s+/);
@@ -305,6 +337,9 @@ function cmdRepl(args: Args): number {
       case 'tasks':
         console.log(renderTasks(state));
         break;
+      case 'skills':
+        console.log(renderSkills(state));
+        break;
       case 'do':
       case 'start':
       case 'stop': {
@@ -313,6 +348,14 @@ function cmdRepl(args: Args): number {
           break;
         }
         console.log(`${c} ${arg}: ${TASK_FN[c](state, arg) ? 'ok' : 'refused'}`);
+        break;
+      }
+      case 'learn': {
+        if (!arg) {
+          console.log('usage: learn <cantripId>');
+          break;
+        }
+        console.log(`learn ${arg}: ${learnCantrip(state, arg) ? 'ok' : 'refused'}`);
         break;
       }
       case 'sim': {
@@ -327,7 +370,7 @@ function cmdRepl(args: Args): number {
         console.log(exportString(state));
         break;
       case 'help':
-        console.log('state | tasks | do/start/stop <id> | sim <sec> | export | quit');
+        console.log('state | tasks | skills | do/start/stop <id> | learn <id> | sim <sec> | export | quit');
         break;
       case 'quit':
       case 'exit':

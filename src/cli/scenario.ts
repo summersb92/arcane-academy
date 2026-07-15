@@ -5,6 +5,7 @@
 import { newGame, type GameState } from '../engine/state';
 import { simulate } from '../engine/tick';
 import { doTask, startTask, stopTask } from '../engine/systems/tasks';
+import { learnCantrip } from '../engine/systems/skills';
 
 export type Op = '>=' | '<=' | '>' | '<' | '==' | '!=';
 
@@ -19,6 +20,7 @@ export type Step =
   | { do: string }
   | { start: string }
   | { stop: string }
+  | { learn: string }
   | { assert: { path: string; op: Op; value: number | boolean } }
   | { note: string };
 
@@ -92,6 +94,9 @@ export function runScenario(spec: Scenario): ScenarioResult {
     } else if ('stop' in step) {
       const ok = stopTask(state, step.stop);
       results.push({ ok: true, desc: `stop ${step.stop}`, detail: ok ? 'ok' : 'refused' });
+    } else if ('learn' in step) {
+      const ok = learnCantrip(state, step.learn);
+      results.push({ ok: true, desc: `learn ${step.learn}`, detail: ok ? 'ok' : 'refused' });
     } else if ('assert' in step) {
       const { path, op, value } = step.assert;
       const raw = resolvePath(state, path);

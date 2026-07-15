@@ -20,6 +20,7 @@ describe('simulate() fixed-timestep consistency', () => {
     const mk = () => {
       const s = newGame(7);
       s.run.caps.insight = 1e9; // lift the cap so Study output stays observable
+      s.run.flags.awakened = true; // Study is gated behind the spark (T-005)
       startTask(s, 'study'); // perpetual (exercises per-second output + runCost)
       startTask(s, 'smith'); // running/timed (exercises the completion path)
       return s;
@@ -43,6 +44,7 @@ describe('simulate() fixed-timestep consistency', () => {
   it('does NOT collapse the past-cap remainder into one oversized step', () => {
     const s = newGame(1);
     s.run.caps.insight = 1e9;
+    s.run.flags.awakened = true; // Study is gated behind the spark (T-005)
     startTask(s, 'study'); // drain 0.2/s < regen 0.5/s → never pauses; output is linear
     const SECONDS = 3 * 3600;
     simulate(s, SECONDS);
@@ -56,6 +58,7 @@ describe('simulate() fixed-timestep consistency', () => {
   it('offline catch-up uses the same TICK-granular routine as simulate', () => {
     const off = newGame(2);
     off.run.caps.insight = 1e9;
+    off.run.flags.awakened = true; // Study is gated behind the spark (T-005)
     startTask(off, 'study');
     const now = off.lastSaved + 3600_000; // 1h later
     off.lastSaved = now - 3600_000;
@@ -63,6 +66,7 @@ describe('simulate() fixed-timestep consistency', () => {
 
     const sim = newGame(2);
     sim.run.caps.insight = 1e9;
+    sim.run.flags.awakened = true; // Study is gated behind the spark (T-005)
     startTask(sim, 'study');
     simulate(sim, 3600);
 
@@ -143,6 +147,7 @@ describe('foreground offline catch-up', () => {
   it('applies the idle gap once and does not double-count with the live-loop frame clamp', () => {
     const s = newGame(1);
     s.run.caps.insight = 1e9;
+    s.run.flags.awakened = true; // Study is gated behind the spark (T-005)
     startTask(s, 'study'); // 0.55/s
     const AWAY_MS = 10 * 60 * 1000; // 10 min backgrounded (rAF paused)
     const now = s.lastSaved + AWAY_MS;
@@ -166,6 +171,7 @@ describe('foreground offline catch-up', () => {
     // to ~1s (0.55), never the whole 600s gap (~330).
     const s2 = newGame(1);
     s2.run.caps.insight = 1e9;
+    s2.run.flags.awakened = true; // Study is gated behind the spark (T-005)
     startTask(s2, 'study');
     s2.lastSaved = now - AWAY_MS;
     applyOffline(s2, now);

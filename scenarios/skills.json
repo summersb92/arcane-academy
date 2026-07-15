@@ -1,0 +1,32 @@
+{
+  "name": "skills",
+  "seed": 1,
+  "steps": [
+    { "note": "Origin: before the spark, Study is gated — a fresh mage can only labour" },
+    { "start": "study" },
+    { "assert": { "path": "run.tasks.study.active", "op": "==", "value": false } },
+    { "assert": { "path": "run.flags.awakened", "op": "==", "value": false } },
+
+    { "note": "idle to the spark (timer ~45s) — guarantees a purely idle player awakens" },
+    { "sim": 50 },
+    { "assert": { "path": "run.flags.awakened", "op": "==", "value": true } },
+
+    { "note": "Awakening: Study is now startable; trickle Insight to afford cantrips" },
+    { "start": "study" },
+    { "assert": { "path": "run.tasks.study.active", "op": "==", "value": true } },
+    { "sim": 60 },
+    { "assert": { "path": "run.resources.insight", "op": ">=", "value": 25 } },
+
+    { "note": "learn Read the Page (opens the web) then Spark (awakens Fire)" },
+    { "learn": "read-the-page" },
+    { "learn": "spark" },
+    { "assert": { "path": "run.skills.length", "op": ">=", "value": 2 } },
+    { "note": "Spark + Read the Page spent 25 Insight (~33 -> ~8): Insight decreased" },
+    { "assert": { "path": "run.resources.insight", "op": "<=", "value": 12 } },
+    { "assert": { "path": "run.essence.fire.awakened", "op": "==", "value": true } },
+
+    { "note": "Fire essence now trickles — after 10s its amount is > 0, proving rate > 0" },
+    { "sim": 10 },
+    { "assert": { "path": "run.essence.fire.amount", "op": ">", "value": 0 } }
+  ]
+}

@@ -2,6 +2,9 @@
   "name": "tasks",
   "seed": 1,
   "steps": [
+    { "note": "idle to the spark (timer ~45s) so Study un-gates (T-005)" },
+    { "sim": 50 },
+    { "assert": { "path": "run.flags.awakened", "op": "==", "value": true } },
     { "note": "start Study (perpetual): occupies an Activity slot and trickles Insight" },
     { "start": "study" },
     { "assert": { "path": "run.tasks.study.active", "op": "==", "value": true } },

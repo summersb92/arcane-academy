@@ -39,6 +39,7 @@ describe('instant tasks', () => {
 describe('activity slots', () => {
   it('starting a continuous task occupies a slot; stopping frees it', () => {
     const s = newGame(1);
+    s.run.flags.awakened = true; // Study is gated behind the spark (T-005)
     expect(slotsUsed(s)).toBe(0);
 
     expect(startTask(s, 'study')).toBe(true);
@@ -52,6 +53,7 @@ describe('activity slots', () => {
 
   it('cannot start more continuous tasks than there are slots (start = 2)', () => {
     const s = newGame(1);
+    s.run.flags.awakened = true; // Study is gated behind the spark (T-005)
     expect(startTask(s, 'study')).toBe(true);
     expect(startTask(s, 'smith')).toBe(true);
     expect(slotsUsed(s)).toBe(2);
@@ -81,6 +83,7 @@ describe('activity slots', () => {
 describe('auto-pause / auto-resume', () => {
   it('a running task pauses when its per-second cost cannot be paid, then resumes', () => {
     const s = newGame(1);
+    s.run.flags.awakened = true; // Study is gated behind the spark (T-005)
     startTask(s, 'study'); // Study drains Stamina 0.2/s
     s.run.vitals.stamina.cur = 0;
     s.run.vitals.stamina.regen = 0; // starve it deterministically

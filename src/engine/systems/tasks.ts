@@ -29,6 +29,7 @@ import {
 } from '../../content/tasks';
 import { ELEMENTS, type ElementId, type GameState, type ResourceId, type TaskRuntime } from '../state';
 import { logEvent } from './chronicle';
+import { outputMult } from './skills';
 
 const RESOURCE_IDS: ResourceId[] = ['gold', 'insight', 'renown', 'moonpetal', 'ironOre', 'spiritDust'];
 const EPS = 1e-9;
@@ -174,7 +175,7 @@ function completionText(def: TaskDef, outs: Amount[]): string {
 /** Grant one cycle's output, bump count, run completion effects, chronicle it. */
 function completeCycle(state: GameState, def: TaskDef, rt: TaskRuntime): void {
   const outs = effectiveOutput(def, rt.count);
-  applyAmounts(state, outs, 1);
+  applyAmounts(state, outs, outputMult(state)); // Kindle Focus (+% all output)
   rt.count += 1;
   if (def.effects) for (const e of def.effects) applyEffect(state, e);
   logEvent(state, completionText(def, outs), 'ev');
@@ -213,7 +214,7 @@ function stepTask(state: GameState, def: TaskDef, rt: TaskRuntime, dt: number): 
   }
 
   if (def.type === 'perpetual') {
-    applyAmounts(state, def.output, dt);
+    applyAmounts(state, def.output, dt * outputMult(state)); // Kindle Focus (+% all output)
     return;
   }
 
@@ -255,7 +256,7 @@ export function doTask(state: GameState, id: string): boolean {
   const rt = getRuntime(state, id);
   applyAmounts(state, def.startCost, -1);
   const outs = effectiveOutput(def, rt.count);
-  applyAmounts(state, outs, 1);
+  applyAmounts(state, outs, outputMult(state)); // Kindle Focus (+% all output)
   rt.count += 1;
   if (def.effects) for (const e of def.effects) applyEffect(state, e);
   logEvent(state, completionText(def, outs), 'ev');
@@ -315,20 +316,37 @@ export function slotsUsed(state: GameState): number {
   return n;
 }
 
-/** Per-second net contribution of a task *while running* (resources + vitals + essence). */
-function netPerSecond(def: TaskDef): Partial<Record<AmountId, number>> {
+/** The storage cap for a resource, or Infinity if uncapped. Only Insight is capped in v0.1. */
+function resourceCap(state: GameState, id: ResourceId): number {
+  return id === 'insight' ? state.run.caps.insight : Infinity;
+}
+
+/** Per-second net contribution of a task *while running* (resources + vitals + essence).
+ *  Output is scaled by the global output multiplier (Kindle Focus). A resource already
+ *  AT its cap contributes 0 net — the tick clamps it — so a capped Study honestly reads
+ *  +0/s instead of the phantom +0.55/s the T-004 review flagged. */
+function netPerSecond(state: GameState, def: TaskDef): Partial<Record<AmountId, number>> {
   const net: Partial<Record<AmountId, number>> = {};
+  const mult = outputMult(state);
   const add = (id: AmountId, v: number): void => {
     net[id] = (net[id] ?? 0) + v;
   };
   if (def.type === 'perpetual') {
-    for (const o of def.output ?? []) add(o.id, o.amount);
+    for (const o of def.output ?? []) add(o.id, o.amount * mult);
     for (const c of def.runCost ?? []) add(c.id, -c.amount);
   } else if (def.type === 'running' || def.type === 'limited') {
     const len = def.length && def.length > 0 ? def.length : 1;
-    for (const o of def.output ?? []) add(o.id, o.amount / len);
+    for (const o of def.output ?? []) add(o.id, (o.amount * mult) / len);
     for (const c of def.startCost ?? []) add(c.id, -c.amount / len);
     for (const c of def.runCost ?? []) add(c.id, -c.amount);
+  }
+  // Cap-awareness: zero out any positive resource rate whose pool is already at cap.
+  for (const id of Object.keys(net) as AmountId[]) {
+    const v = net[id] ?? 0;
+    if (v > 0 && RESOURCE_IDS.includes(id as ResourceId)) {
+      const cap = resourceCap(state, id as ResourceId);
+      if ((state.run.resources[id as ResourceId] ?? 0) >= cap - EPS) net[id] = 0;
+    }
   }
   return net; // instant → {} (no per-second rate; UI shows per-action output instead)
 }
@@ -362,7 +380,7 @@ export function taskInfo(state: GameState, def: TaskDef): TaskInfo {
     slotFull,
     startable,
     pausedResourceId,
-    net: netPerSecond(def),
+    net: netPerSecond(state, def),
   };
 }
 
@@ -381,7 +399,7 @@ export function taskRates(state: GameState): {
   for (const def of TASKS) {
     const rt = peekRuntime(state, def.id);
     if (!rt.active || rt.paused) continue;
-    const net = netPerSecond(def);
+    const net = netPerSecond(state, def);
     for (const key of Object.keys(net) as AmountId[]) {
       const v = net[key];
       if (v === undefined) continue;

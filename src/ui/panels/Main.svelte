@@ -1,6 +1,7 @@
 <script lang="ts">
   import { game, activeTab, dispatchTask, toggleTaskRepeat } from '../stores';
   import type { TaskView } from '../stores';
+  import Skills from './Skills.svelte';
 
   // Whole-card click hook (foundation left this for T-004). Defaults to the store dispatcher.
   export let onTask: (t: TaskView) => void = dispatchTask;
@@ -90,7 +91,7 @@
             {#if t.locked}
               <div class="io lockt">{t.lockText ?? ''}</div>
             {:else}
-              <div class="io">{t.io}</div>
+              <div class="io">{t.io}{#if t.capMark}<span class="cap" title={t.capNote}>{t.capMark}</span>{/if}</div>
               <div class="io payoff" class:cantpay={!t.affordable}>
                 {t.payoff}{#if !t.affordable} · can't afford{/if}
               </div>
@@ -111,10 +112,7 @@
       </ul>
     </section>
   {:else if $activeTab === 'skills'}
-    <section>
-      <h2>Skills</h2>
-      <div class="sub">The cantrip web. Spend ◈ Insight to learn cantrips; awakening an element starts its trickle. (T-005)</div>
-    </section>
+    <Skills />
   {:else if $activeTab === 'home'}
     <section>
       <h2>Home</h2>
@@ -139,6 +137,11 @@
   .warn {
     color: var(--life);
     font-size: 11px;
+  }
+  .cap {
+    color: var(--gold);
+    font-weight: 700;
+    cursor: help;
   }
   .tcard.cant {
     opacity: 0.85;

@@ -4,6 +4,8 @@
 
 import type { GameState } from './state';
 import { runTasks } from './systems/tasks';
+import { runEssence } from './systems/essence';
+import { runProgression } from './systems/progression';
 
 export const TICK = 0.1; // seconds per fixed step
 export const MAX_CATCHUP_STEPS = 100_000; // bounds a single advance()
@@ -18,6 +20,9 @@ export function step(state: GameState, dt: number): void {
   // --- tasks (the Task/Activity system drives all production; runs before caps) ---
   runTasks(state, dt);
 
+  // --- essence (cantrip-awakened per-element trickle; not capped in v0.1) ---
+  runEssence(state, dt);
+
   // --- caps ---
   if (run.resources.insight > run.caps.insight) run.resources.insight = run.caps.insight;
 
@@ -27,6 +32,9 @@ export function step(state: GameState, dt: number): void {
   regen(run.vitals.life, dt);
 
   state.playtime += dt;
+
+  // --- progression (the spark & later era beats; checked after time advances) ---
+  runProgression(state);
 }
 
 function regen(v: { cur: number; max: number; regen: number }, dt: number): void {

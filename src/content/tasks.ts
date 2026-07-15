@@ -107,6 +107,7 @@ export const TASKS: TaskDef[] = [
     cls: 'insight',
     runCost: [A('vital', 'stamina', 0.2)],
     output: [A('resource', 'insight', 0.55)],
+    requires: [{ kind: 'flag', flag: 'awakened' }], // the spark un-gates Study (T-005)
   },
   {
     id: 'rest',
@@ -127,6 +128,19 @@ export const TASKS: TaskDef[] = [
     max: 1,
     startCost: [A('resource', 'gold', 40)],
     effects: [{ kind: 'activitySlot', amount: 1 }], // Activity slots 2 → 3
+  },
+  {
+    id: 'grand-library',
+    name: 'Grand Library',
+    type: 'limited',
+    tag: 'Storage',
+    cls: 'insight',
+    chip: 'Upgrade',
+    length: 8,
+    max: 1,
+    startCost: [A('resource', 'gold', 60)],
+    requires: [{ kind: 'flag', flag: 'awakened' }],
+    effects: [{ kind: 'raiseInsightCap', amount: 150 }], // Insight cap 100 → 250 (exercises caps + the `*` marker)
   },
 ];
 

@@ -5,8 +5,9 @@
 
 import { writable } from 'svelte/store';
 import { createAccumulator } from '../engine/tick';
-import { newGame, type GameState, ELEMENTS, type ElementId } from '../engine/state';
-import { AMOUNT_LABEL, TASKS, type TaskDef, type TaskType } from '../content/tasks';
+import { newGame, type GameState, ELEMENTS, type ElementId, type ResourceId } from '../engine/state';
+import { AMOUNT_LABEL, TASKS, type Amount, type TaskDef, type TaskType } from '../content/tasks';
+import { CANTRIP_BY_ID } from '../content/cantrips';
 import {
   listTaskInfo,
   taskRates,
@@ -18,6 +19,8 @@ import {
   toggleRepeat as engineToggleRepeat,
   type TaskInfo,
 } from '../engine/systems/tasks';
+import { learnCantrip as engineLearnCantrip, listCantripInfo, outputMult } from '../engine/systems/skills';
+import { essenceRates } from '../engine/systems/essence';
 import { setNotation } from './format';
 
 // ---- UiState: the stable view contract the panels read ----
@@ -25,10 +28,13 @@ export interface ResourceView {
   amount: number;
   rate: number;
   cap?: number;
+  atCap?: boolean; // amount is at/over the cap → gains are wasted (dim the rate)
+  rateTip?: string; // sourced-number tooltip: "+0.61/s = Study 0.55 × Kindle ×1.10"
 }
 export interface VitalView {
   cur: number;
   max: number;
+  regen: number; // per-second recovery toward max
 }
 export interface EssenceView {
   id: string;
@@ -38,6 +44,7 @@ export interface EssenceView {
   amount: number;
   rate: number;
   awakened: boolean;
+  rateTip?: string; // sourced-number tooltip on the trickle rate
 }
 export interface TaskView {
   id: string;
@@ -62,6 +69,22 @@ export interface TaskView {
   repeat: boolean; // ↻ toggle state (running)
   canRepeat: boolean; // running tasks expose the ↻ toggle
   count: number; // completions
+  capMark?: string; // "*" when an Insight cost exceeds the Insight cap
+  capNote?: string; // hover text for the `*` marker
+}
+export interface CantripView {
+  id: string;
+  name: string;
+  blurb: string;
+  cls: string; // left-edge colour class (awakened element, else insight)
+  cost: string; // formatted "◈20"
+  status: 'owned' | 'available' | 'locked';
+  affordable: boolean; // Insight ≥ cost right now (and within the cap)
+  learnable: boolean; // available + affordable + within cap → clickable
+  effectText: string; // what learning it does
+  prereqNote?: string; // "needs: Read the Page" when locked on a prereq
+  capMark?: string; // "*" when cost exceeds the Insight cap
+  capNote?: string; // hover text for the `*` marker
 }
 export interface TabView {
   id: string;
@@ -81,6 +104,7 @@ export interface UiState {
   essence: EssenceView[];
   tabs: TabView[];
   tasks: TaskView[];
+  cantrips: CantripView[];
   slots: { used: number; total: number };
   chronicle: ChronicleView[];
 }
@@ -179,11 +203,12 @@ function lockTextFor(def: TaskDef, info: TaskInfo): string | undefined {
   if (info.locked) return 'requirements unmet';
   return undefined;
 }
-function buildTaskView(def: TaskDef, info: TaskInfo): TaskView {
+function buildTaskView(state: GameState, def: TaskDef, info: TaskInfo): TaskView {
   const pausedReason =
     info.paused && info.pausedResourceId
       ? `needs ${g(info.pausedResourceId)} ${AMOUNT_LABEL[info.pausedResourceId] ?? info.pausedResourceId}`
       : undefined;
+  const cap = costCapMark(state, def.startCost);
   return {
     id: def.id,
     name: def.name,
@@ -207,6 +232,86 @@ function buildTaskView(def: TaskDef, info: TaskInfo): TaskView {
     repeat: info.repeat,
     canRepeat: def.type === 'running',
     count: info.count,
+    capMark: cap.capMark,
+    capNote: cap.capNote,
+  };
+}
+
+// ---- caps + sourced-number tooltips (the §3.14 QoL layer) ----
+/** Name of the task whose effect raises the Insight cap (for the `*` marker hover). */
+function capRaiserName(): string | undefined {
+  return TASKS.find((d) => d.effects?.some((e) => e.kind === 'raiseInsightCap'))?.name;
+}
+
+/** A `*` marker + hover when any Insight cost in the list exceeds the current Insight cap. */
+function costCapMark(state: GameState, cost: Amount[] | undefined): { capMark?: string; capNote?: string } {
+  const over = (cost ?? []).some((c) => c.pool === 'resource' && c.id === 'insight' && c.amount > state.run.caps.insight);
+  if (!over) return {};
+  const raiser = capRaiserName();
+  return { capMark: '*', capNote: `exceeds Insight Max${raiser ? ` — build ${raiser} to raise it` : ''}` };
+}
+
+/** Sourced-number tooltip for a left-panel resource rate: "+0.61/s = Study 0.55 × Kindle ×1.10". */
+function resourceRateTip(state: GameState, id: ResourceId, atCap: boolean): string {
+  const mult = outputMult(state);
+  const parts: { name: string; base: number }[] = [];
+  for (const def of TASKS) {
+    const rt = state.run.tasks[def.id];
+    if (!rt?.active || rt.paused) continue;
+    let base = 0;
+    if (def.type === 'perpetual') {
+      for (const o of def.output ?? []) if (o.id === id) base += o.amount;
+    } else if (def.type === 'running' || def.type === 'limited') {
+      const len = def.length && def.length > 0 ? def.length : 1;
+      for (const o of def.output ?? []) if (o.id === id) base += o.amount / len;
+    }
+    if (base > 0) parts.push({ name: def.name, base });
+  }
+  if (!parts.length) return '';
+  const base = parts.reduce((s, p) => s + p.base, 0);
+  const src = parts.map((p) => `${p.name} ${numStr(p.base)}`).join(' + ');
+  const multStr = mult !== 1 ? ` × Kindle ×${mult.toFixed(2)}` : '';
+  const capStr = atCap ? ' — at cap, no gain' : '';
+  return `+${numStr(base * mult)}/s = ${src}${multStr}${capStr}`;
+}
+
+/** Sourced-number tooltip for an essence trickle rate. */
+function essenceRateTip(state: GameState, id: ElementId): string {
+  const mult = outputMult(state);
+  const parts: { name: string; base: number }[] = [];
+  for (const sid of state.run.skills ?? []) {
+    const def = CANTRIP_BY_ID[sid];
+    if (!def) continue;
+    for (const e of def.effects) if (e.kind === 'awaken' && e.element === id) parts.push({ name: def.name, base: e.trickle });
+  }
+  if (!parts.length) return '';
+  const base = parts.reduce((s, p) => s + p.base, 0);
+  const src = parts.map((p) => `${p.name} ${numStr(p.base)}`).join(' + ');
+  const multStr = mult !== 1 ? ` × Kindle ×${mult.toFixed(2)}` : '';
+  return `+${numStr(base * mult)}/s = ${src}${multStr}`;
+}
+
+/** Map an engine CantripInfo → the panel's CantripView (adds glyphs, formatting, cap marker). */
+function buildCantripView(info: ReturnType<typeof listCantripInfo>[number]): CantripView {
+  const cls = info.awakensElement ? ELEMENT_META[info.awakensElement].cls : 'insight';
+  const raiser = capRaiserName();
+  const prereqNote =
+    info.status === 'locked' && info.missingPrereqs.length
+      ? `needs: ${info.missingPrereqs.map((r) => CANTRIP_BY_ID[r]?.name ?? r).join(', ')}`
+      : undefined;
+  return {
+    id: info.id,
+    name: info.name,
+    blurb: info.blurb,
+    cls,
+    cost: `${g('insight')}${numStr(info.cost)}`,
+    status: info.status,
+    affordable: info.affordable && !info.exceedsCap,
+    learnable: info.status === 'available' && info.affordable && !info.exceedsCap,
+    effectText: info.effectText,
+    prereqNote,
+    capMark: info.exceedsCap ? '*' : undefined,
+    capNote: info.exceedsCap ? `exceeds Insight Max${raiser ? ` — build ${raiser} to raise it` : ''}` : undefined,
   };
 }
 
@@ -214,31 +319,53 @@ function buildTaskView(def: TaskDef, info: TaskInfo): TaskView {
 export function toView(state: GameState): UiState {
   const r = state.run.resources;
   const rates = taskRates(state);
+  const eRates = essenceRates(state); // cantrip-awakened trickle (adds to any task-granted essence)
   const infos = listTaskInfo(state);
+  const insightAtCap = r.insight >= state.run.caps.insight - 1e-9;
   return {
     resources: {
-      gold: { amount: r.gold, rate: rates.resources.gold ?? 0 },
-      insight: { amount: r.insight, rate: rates.resources.insight ?? 0, cap: state.run.caps.insight },
-      renown: { amount: r.renown, rate: rates.resources.renown ?? 0 },
+      gold: { amount: r.gold, rate: rates.resources.gold ?? 0, rateTip: resourceRateTip(state, 'gold', false) },
+      insight: {
+        amount: r.insight,
+        rate: rates.resources.insight ?? 0,
+        cap: state.run.caps.insight,
+        atCap: insightAtCap,
+        rateTip: resourceRateTip(state, 'insight', insightAtCap),
+      },
+      renown: { amount: r.renown, rate: rates.resources.renown ?? 0, rateTip: resourceRateTip(state, 'renown', false) },
     },
     materials: { moonpetal: r.moonpetal, ironOre: r.ironOre, spiritDust: r.spiritDust },
     vitals: {
-      life: { cur: state.run.vitals.life.cur, max: state.run.vitals.life.max },
-      stamina: { cur: state.run.vitals.stamina.cur, max: state.run.vitals.stamina.max },
-      mana: { cur: state.run.vitals.mana.cur, max: state.run.vitals.mana.max },
+      life: { cur: state.run.vitals.life.cur, max: state.run.vitals.life.max, regen: state.run.vitals.life.regen },
+      stamina: {
+        cur: state.run.vitals.stamina.cur,
+        max: state.run.vitals.stamina.max,
+        regen: state.run.vitals.stamina.regen,
+      },
+      mana: { cur: state.run.vitals.mana.cur, max: state.run.vitals.mana.max, regen: state.run.vitals.mana.regen },
     },
     essence: ELEMENTS.map((id) => {
       const e = state.run.essence[id];
       const meta = ELEMENT_META[id];
-      return { id, ...meta, amount: e.amount, rate: rates.essence[id] ?? 0, awakened: e.awakened };
+      const rate = (rates.essence[id] ?? 0) + (eRates[id] ?? 0);
+      return {
+        id,
+        ...meta,
+        amount: e.amount,
+        rate,
+        awakened: e.awakened,
+        rateTip: e.awakened ? essenceRateTip(state, id) : undefined,
+      };
     }),
     tabs: [
       { id: 'main', label: 'Main', visible: true, locked: false },
-      { id: 'skills', label: 'Skills', visible: state.run.phase !== 'origin', locked: false },
+      // The spark reveals Skills (the `awakened` flag is the canonical trigger — T-005).
+      { id: 'skills', label: 'Skills', visible: state.run.flags.awakened === true, locked: false },
       { id: 'home', label: 'Home', visible: state.run.flags.lairFounded === true, locked: false },
       { id: 'academy', label: 'Academy', visible: true, locked: state.run.phase !== 'founded' },
     ],
-    tasks: TASKS.map((def, i) => buildTaskView(def, infos[i])),
+    tasks: TASKS.map((def, i) => buildTaskView(state, def, infos[i])),
+    cantrips: listCantripInfo(state).map((info) => buildCantripView(info)),
     slots: { used: slotsUsed(state), total: activitySlots(state) },
     chronicle: state.run.chronicle
       .slice(-12)
@@ -280,6 +407,12 @@ export function dispatchTask(view: TaskView): void {
 /** The in-card ↻ toggle for Running tasks. */
 export function toggleTaskRepeat(id: string): void {
   engineToggleRepeat(state, id);
+  publish();
+}
+
+/** Learn a cantrip from the Skills tab: spends Insight, applies its effect (awaken / +regen / global mult). */
+export function learnCantrip(id: string): void {
+  engineLearnCantrip(state, id);
   publish();
 }
 

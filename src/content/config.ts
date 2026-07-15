@@ -4,6 +4,16 @@
 export const OFFLINE_CAP_MS = 12 * 60 * 60 * 1000; // 12h catch-up cap (spec §3.4)
 export const AUTOSAVE_INTERVAL_MS = 30_000;
 
+/**
+ * The spark / Awakening trigger (spec §5): fires when Gold reaches the threshold
+ * OR a short timer elapses — whichever comes first — so even a purely idle player
+ * who never labours still awakens and unlocks Study + the cantrip web.
+ */
+export const SPARK = {
+  goldThreshold: 25, // ⦿ that earns the page's attention
+  timerSeconds: 45, // …or this many seconds of simulated play, guaranteed
+};
+
 export const STARTING = {
   gold: 0,
   insight: 0,

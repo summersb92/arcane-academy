@@ -10,6 +10,7 @@ import { formatNumber } from '../src/engine/format';
 describe('production math', () => {
   it('an active perpetual task advances its resource by rate * seconds', () => {
     const s = newGame(123);
+    s.run.flags.awakened = true; // Study is gated behind the spark (T-005)
     startTask(s, 'study'); // perpetual: Insight +0.55/s (Stamina drain sustained by regen)
     simulate(s, 60);
     expect(s.run.resources.insight).toBeCloseTo(0.55 * 60, 4);
@@ -18,6 +19,7 @@ describe('production math', () => {
 
   it('a single step scales by dt', () => {
     const s = newGame(1);
+    s.run.flags.awakened = true; // Study is gated behind the spark (T-005)
     startTask(s, 'study');
     step(s, 2);
     expect(s.run.resources.insight).toBeCloseTo(0.55 * 2, 6);
@@ -63,6 +65,7 @@ describe('save round-trip', () => {
 describe('offline catch-up', () => {
   it('advances resources for elapsed time', () => {
     const s = newGame(1);
+    s.run.flags.awakened = true; // Study is gated behind the spark (T-005)
     startTask(s, 'study'); // perpetual Insight producer drives the offline gains
     s.lastSaved = Date.now() - 60_000; // 60s ago
     const summary = applyOffline(s, Date.now());
@@ -72,6 +75,7 @@ describe('offline catch-up', () => {
 
   it('caps very long absences at the offline cap', () => {
     const s = newGame(1);
+    s.run.flags.awakened = true; // Study is gated behind the spark (T-005)
     startTask(s, 'study');
     s.lastSaved = Date.now() - OFFLINE_CAP_MS * 3;
     const summary = applyOffline(s, Date.now());
