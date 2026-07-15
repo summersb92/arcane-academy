@@ -42,6 +42,7 @@ import type { OfflineSummary } from '../engine/offline';
 import { serialize, LOCALSTORAGE_KEY } from '../engine/save';
 import type { Notation } from '../engine/format';
 import { setNotation } from './format';
+import { applyFont } from './font';
 
 // ---- UiState: the stable view contract the panels read ----
 export interface ResourceView {
@@ -621,6 +622,21 @@ export function persist(): void {
 export function importState(next: GameState): void {
   setState(next);
   persist();
+}
+
+/**
+ * Hard reset: discard the current save and start a brand-new game from the Origin.
+ * Overwrites the persisted save immediately (the fresh state IS the new save), so a
+ * reload keeps the clean start. Re-applies notation + font from the new defaults and
+ * returns the player to the Main tab. Irreversible — the caller confirms first.
+ */
+export function resetGame(): void {
+  state = newGame();
+  setNotation(state.settings.notation);
+  applyFont(state.settings.font);
+  activeTab.set('main');
+  persist();
+  publish();
 }
 
 /** Change the number-notation setting: persist it into the save + re-render. */

@@ -14,7 +14,7 @@
       aria-haspopup="dialog"
       title="Save, load & settings"
       on:click={() => systemOpen.set(true)}
-    >⚙ System</button>
+    >⚙ Settings</button>
   </div>
 </header>
 

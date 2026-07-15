@@ -11,6 +11,7 @@
     setNotationSetting,
     setChronicleLinesSetting,
     setFontSetting,
+    resetGame,
   } from '../stores';
   import { exportString, safeLoad } from '../../engine/save';
   import type { Notation } from '../../engine/format';
@@ -40,6 +41,7 @@
   let importText = '';
   let stringOut = '';
   let dragover = false;
+  let confirmReset = false;
   let closeBtn: HTMLButtonElement | undefined;
 
   // Refresh the settings controls from the live save each time the panel opens.
@@ -63,6 +65,14 @@
     msg = null;
     stringOut = '';
     dragover = false;
+    confirmReset = false;
+  }
+
+  /** Wipe the save and start over. Two-step: the button arms `confirmReset` first. */
+  function doReset(): void {
+    resetGame();
+    confirmReset = false;
+    setMsg('ok', 'Save cleared — a fresh start from the Origin.');
   }
   function onKey(e: KeyboardEvent): void {
     if (e.key === 'Escape') {
@@ -188,7 +198,7 @@
       on:keydown={onKey}
     >
       <div class="shead">
-        <h2 id="system-title">System · Save &amp; Settings</h2>
+        <h2 id="system-title">Settings</h2>
         <button class="x" bind:this={closeBtn} on:click={close} aria-label="Close">✕</button>
       </div>
 
@@ -260,6 +270,22 @@
       <p class="foot-note">
         Import is corruption-safe: a bad or empty save is refused and your current game is kept.
       </p>
+
+      <h3 class="danger">Danger zone</h3>
+      {#if !confirmReset}
+        <button class="btn danger" on:click={() => (confirmReset = true)}>
+          Hard reset — clear save &amp; start over
+        </button>
+        <p class="foot-note">Wipes your save and returns to a pure start. This cannot be undone.</p>
+      {:else}
+        <div class="msg err" role="alert">
+          This erases your current game permanently. Export a save first if you want to keep it.
+        </div>
+        <div class="btnrow">
+          <button class="btn danger" on:click={doReset}>Yes, wipe it and start over</button>
+          <button class="btn" on:click={() => (confirmReset = false)}>Cancel</button>
+        </div>
+      {/if}
     </div>
   </div>
 {/if}
@@ -424,6 +450,17 @@
     color: var(--faint);
     font-size: 11px;
     line-height: 1.5;
+  }
+  h3.danger {
+    color: var(--life);
+  }
+  .btn.danger {
+    color: var(--life);
+    border-color: var(--life);
+  }
+  .btn.danger:hover {
+    background: color-mix(in srgb, var(--life) 14%, transparent);
+    border-color: var(--life);
   }
   .btn {
     margin-top: 8px;
