@@ -16,6 +16,7 @@ export type CantripEffect =
   | { kind: 'openTree' } // Read the Page — flavour node that opens the web (no mechanical payload)
   | { kind: 'awaken'; element: ElementId; trickle: number } // awaken an essence + start its per-second trickle
   | { kind: 'vitalRegen'; vital: VitalId; amount: number } // permanent +regen to a vital
+  | { kind: 'unlockVital'; vital: VitalId; max: number; regen: number } // unlock a locked vital (sets its max + regen)
   | { kind: 'outputMult'; add: number } // global output multiplier (+0.10 = +10% all output)
   | { kind: 'flag'; flag: string }; // set a run flag
 
@@ -65,6 +66,14 @@ export const CANTRIPS: Cantrip[] = [
     cost: 15,
     requires: ['read-the-page'],
     effects: [{ kind: 'vitalRegen', vital: 'stamina', amount: 0.3 }],
+  },
+  {
+    id: 'inner-wellspring',
+    name: 'Inner Wellspring',
+    blurb: 'A hidden font opens within — Mana unlocks and begins to pool.',
+    cost: 15,
+    requires: ['read-the-page'],
+    effects: [{ kind: 'unlockVital', vital: 'mana', max: 10, regen: 0.1 }],
   },
   {
     id: 'kindle-focus',

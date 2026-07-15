@@ -2,15 +2,35 @@
 // No DOM, no Svelte. Everything the sim, save, and CLI touch lives here.
 
 import { STARTING } from '../content/config';
+import type { HomeTierId } from '../content/home';
 import { seedFrom } from './rng';
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 export type ElementId = 'prism' | 'fire' | 'water' | 'earth' | 'air' | 'dark' | 'light';
 
 export type ResourceId = 'gold' | 'insight' | 'renown' | 'moonpetal' | 'ironOre' | 'spiritDust';
 
+export type VitalId = 'life' | 'stamina' | 'mana';
+
 export type Phase = 'origin' | 'awakened' | 'lair' | 'founded';
+
+/** BASE storage caps (the mutable floor). EFFECTIVE caps add equipped-item / tier-innate
+ *  `max` modifiers on top (see systems/home.ts effectiveCap). Renown is uncapped. */
+export interface Caps {
+  gold: number;
+  insight: number;
+  moonpetal: number;
+  ironOre: number;
+  spiritDust: number;
+}
+
+/** The lair (v0.1.1): a housing tier plus the items you own and have equipped. */
+export interface HomeState {
+  tier: HomeTierId;
+  owned: string[]; // item ids purchased
+  equipped: string[]; // item ids currently slotted (⊆ owned, ≤ tier.slots)
+}
 
 export interface Vital {
   cur: number;
@@ -41,12 +61,13 @@ export interface RunState {
   act: number;
   phase: Phase;
   resources: Record<ResourceId, number>;
-  caps: { insight: number };
+  caps: Caps;
   vitals: { life: Vital; stamina: Vital; mana: Vital };
   essence: Record<ElementId, EssenceState>;
   tasks: Record<string, TaskRuntime>; // T-004
   activitySlots: number; // continuous-task capacity (starts 2; "Widen the Study" raises to 3) — T-004
   skills: string[]; // learned cantrip ids (T-005)
+  home: HomeState; // housing tier + owned/equipped items (v0.1.1)
   flags: Record<string, boolean>;
   chronicle: ChronicleEntry[];
 }
@@ -54,6 +75,8 @@ export interface RunState {
 export interface Settings {
   notation: 'suffix' | 'full' | 'scientific';
   theme: string;
+  chronicleLines: number; // how many Chronicle lines to show (clamped 5..10) — v0.1.1
+  font: string; // UI font family key ('mono' default) — v0.1.1
 }
 
 export interface GameState {
@@ -92,7 +115,13 @@ export function newGame(seed: number = seedFrom(Date.now())): GameState {
         ironOre: STARTING.ironOre,
         spiritDust: STARTING.spiritDust,
       },
-      caps: { insight: STARTING.insightCap },
+      caps: {
+        gold: STARTING.goldCap,
+        insight: STARTING.insightCap,
+        moonpetal: STARTING.materialCap,
+        ironOre: STARTING.materialCap,
+        spiritDust: STARTING.materialCap,
+      },
       vitals: {
         life: { ...STARTING.life },
         stamina: { ...STARTING.stamina },
@@ -102,10 +131,11 @@ export function newGame(seed: number = seedFrom(Date.now())): GameState {
       tasks: {},
       activitySlots: STARTING.activitySlots,
       skills: [],
+      home: { tier: 'vagrant', owned: [], equipped: [] },
       flags: {},
       chronicle: [{ at: 0, text: 'You awaken, penniless, in the stable straw.' }],
     },
-    settings: { notation: 'suffix', theme: 'system' },
+    settings: { notation: 'suffix', theme: 'system', chronicleLines: 8, font: 'mono' },
     playtime: 0,
     lastSaved: now,
   };

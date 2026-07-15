@@ -16,6 +16,6 @@
     { "assert": { "path": "run.tasks.study.active", "op": "==", "value": true } },
     { "note": "instant task works alongside the running one" },
     { "do": "clean-stables" },
-    { "assert": { "path": "run.resources.gold", "op": ">=", "value": 2.5 } }
+    { "assert": { "path": "run.resources.gold", "op": ">=", "value": 0.25 } }
   ]
 }

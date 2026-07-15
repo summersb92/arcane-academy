@@ -13,6 +13,7 @@ import { LAIR, SPARK } from '../../content/config';
 import type { GameState } from '../state';
 import { logEvent } from './chronicle';
 import { foundingStatus, foundingSummaryLine } from './founding';
+import { effectiveCap } from './home';
 
 const EPS = 1e-9;
 
@@ -71,11 +72,13 @@ function runHints(state: GameState): void {
   const f = state.run.flags;
 
   // Insight pinned at its cap with things to spend it on → point at the sinks.
+  // Read the EFFECTIVE cap (base + item `max` mods) so the hint tracks the real ceiling.
+  const insightCap = effectiveCap(state, 'insight');
   if (
     !f.hintInsightFull &&
     isAwakened(state) &&
-    state.run.caps.insight > 0 &&
-    (state.run.resources.insight ?? 0) >= state.run.caps.insight - EPS
+    insightCap > 0 &&
+    (state.run.resources.insight ?? 0) >= insightCap - EPS
   ) {
     f.hintInsightFull = true;
     logEvent(state, 'Insight is full — spend it: learn a cantrip, or raise the cap with the Grand Library.', 'ev');

@@ -9,7 +9,7 @@
 
 import { CANTRIP_BY_ID } from '../../content/cantrips';
 import type { ElementId, GameState } from '../state';
-import { homeEssenceBase } from './home';
+import { awakenHomeEssence, homeEssenceBase } from './home';
 import { outputMult } from './skills';
 
 /**
@@ -48,8 +48,11 @@ export function essenceRates(state: GameState): Partial<Record<ElementId, number
   return rates;
 }
 
-/** Advance every awakened element's essence by its trickle × dt. Called by tick.step. */
+/** Advance every awakened element's essence by its trickle × dt. Called by tick.step.
+ *  First folds in item/tier essence: awaken any element a Home Modifier now feeds
+ *  (Hearth Stone → Fire, Wayfarer Tent → Air) so its trickle counts from this tick. */
 export function runEssence(state: GameState, dt: number): void {
+  awakenHomeEssence(state);
   const rates = essenceRates(state);
   for (const key of Object.keys(rates) as ElementId[]) {
     state.run.essence[key].amount += (rates[key] ?? 0) * dt;

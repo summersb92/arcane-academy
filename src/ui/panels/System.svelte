@@ -4,10 +4,18 @@
   // the Notation setting. The DOM download/upload lives in the UI adapter (saveio.ts);
   // corruption-safe import routes through the engine's safeLoad, so a bad file surfaces
   // a clear message and KEEPS the current save (never a silent wipe).
-  import { systemOpen, getState, importState, setNotationSetting } from '../stores';
+  import {
+    systemOpen,
+    getState,
+    importState,
+    setNotationSetting,
+    setChronicleLinesSetting,
+    setFontSetting,
+  } from '../stores';
   import { exportString, safeLoad } from '../../engine/save';
   import type { Notation } from '../../engine/format';
   import { downloadSave, readFileText } from '../saveio';
+  import { applyFont } from '../font';
 
   const NOTATIONS: { id: Notation; label: string }[] = [
     { id: 'suffix', label: 'Suffix — 1.9K' },
@@ -15,17 +23,36 @@
     { id: 'scientific', label: 'Scientific — 1.9e3' },
   ];
 
+  const CHRONICLE_LINES = [5, 6, 7, 8, 9, 10];
+
+  const FONTS: { id: string; label: string }[] = [
+    { id: 'mono', label: 'Mono — monospace (default)' },
+    { id: 'sans', label: 'Sans — system sans-serif' },
+    { id: 'serif', label: 'Serif' },
+    { id: 'large', label: 'Large — mono, bigger' },
+    { id: 'bold', label: 'Bold — mono, heavier' },
+  ];
+
   let notation: Notation = 'suffix';
+  let chronicleLines = 8;
+  let font = 'mono';
   let msg: { kind: 'ok' | 'err'; text: string } | null = null;
   let importText = '';
   let stringOut = '';
   let dragover = false;
   let closeBtn: HTMLButtonElement | undefined;
 
-  // Refresh the notation control from the live save each time the panel opens.
+  // Refresh the settings controls from the live save each time the panel opens.
   $: if ($systemOpen) {
-    notation = getState().settings.notation;
+    refreshSettings();
     queueMicrotask(() => closeBtn?.focus());
+  }
+
+  function refreshSettings(): void {
+    const s = getState().settings;
+    notation = s.notation;
+    chronicleLines = s.chronicleLines;
+    font = s.font;
   }
 
   function setMsg(kind: 'ok' | 'err', text: string): void {
@@ -48,6 +75,19 @@
     notation = (e.currentTarget as HTMLSelectElement).value as Notation;
     setNotationSetting(notation);
     setMsg('ok', `Notation set to ${notation}.`);
+  }
+
+  function onChronicleLines(e: Event): void {
+    chronicleLines = Number((e.currentTarget as HTMLSelectElement).value);
+    setChronicleLinesSetting(chronicleLines);
+    setMsg('ok', `Chronicle showing ${chronicleLines} lines.`);
+  }
+
+  function onFont(e: Event): void {
+    font = (e.currentTarget as HTMLSelectElement).value;
+    setFontSetting(font); // persist into the save
+    applyFont(font); // reflect onto <html data-font> now
+    setMsg('ok', `Font set to ${font}.`);
   }
 
   async function copyString(): Promise<void> {
@@ -87,6 +127,10 @@
       setMsg('err', `Import failed: ${e instanceof Error ? e.message : String(e)} Your current save was kept.`);
       return;
     }
+    // The imported save carries its own settings (font/notation/chronicle lines) — reflect
+    // the font onto <html> now and refresh the controls to match the loaded values.
+    applyFont(getState().settings.font);
+    refreshSettings();
     const migrated = res.migratedFrom !== undefined ? ` (migrated from v${res.migratedFrom})` : '';
     setMsg('ok', `Loaded ${source}${migrated}. Your game is updated.`);
     importText = '';
@@ -152,12 +196,33 @@
         <div class="msg {msg.kind}" role="status">{msg.text}</div>
       {/if}
 
-      <h3>Notation</h3>
+      <h3>Display</h3>
       <label class="field">
         <span>How numbers display</span>
         <select class="sel" aria-label="Number notation" value={notation} on:change={onNotation}>
           {#each NOTATIONS as n (n.id)}
             <option value={n.id}>{n.label}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="field">
+        <span>Chronicle lines</span>
+        <select
+          class="sel"
+          aria-label="Chronicle lines"
+          value={chronicleLines}
+          on:change={onChronicleLines}
+        >
+          {#each CHRONICLE_LINES as n (n)}
+            <option value={n}>{n}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="field">
+        <span>Font</span>
+        <select class="sel" aria-label="Font" value={font} on:change={onFont}>
+          {#each FONTS as ft (ft.id)}
+            <option value={ft.id}>{ft.label}</option>
           {/each}
         </select>
       </label>

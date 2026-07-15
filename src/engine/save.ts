@@ -85,7 +85,10 @@ export function migrate(state: GameState, fromVersion: number): GameState {
     s = migrate0to1(s);
     v = 1;
   }
-  // future: if (v === 1) { s = migrate1to2(s); v = 2; }
+  if (v === 1) {
+    s = migrate1to2(s);
+    v = 2;
+  }
   void v;
   s.version = SAVE_VERSION;
   return s;
@@ -97,6 +100,24 @@ function migrate0to1(s: GameState): GameState {
   const run = (s.run ??= {} as GameState['run']);
   run.tasks ??= {};
   if (typeof run.activitySlots !== 'number') run.activitySlots = STARTING.activitySlots;
+  return s;
+}
+
+/** v1 → v2 (v0.1.1): Gold + material caps become first-class, the lair becomes
+ *  housing-tier + items, and two display settings arrive. Establish the new shape;
+ *  normalize() below fills anything this rung leaves untouched. */
+function migrate1to2(s: GameState): GameState {
+  const run = (s.run ??= {} as GameState['run']);
+  const caps = (run.caps ??= {} as GameState['run']['caps']);
+  if (typeof caps.gold !== 'number') caps.gold = STARTING.goldCap;
+  if (typeof caps.insight !== 'number') caps.insight = STARTING.insightCap;
+  if (typeof caps.moonpetal !== 'number') caps.moonpetal = STARTING.materialCap;
+  if (typeof caps.ironOre !== 'number') caps.ironOre = STARTING.materialCap;
+  if (typeof caps.spiritDust !== 'number') caps.spiritDust = STARTING.materialCap;
+  if (!run.home || typeof run.home !== 'object') run.home = { tier: 'vagrant', owned: [], equipped: [] };
+  const st = (s.settings ??= {} as GameState['settings']);
+  if (typeof st.chronicleLines !== 'number') st.chronicleLines = 8;
+  if (typeof st.font !== 'string') st.font = 'mono';
   return s;
 }
 
@@ -130,6 +151,7 @@ function peekVersion(text: string): number | undefined {
 }
 
 const RESOURCE_IDS: ResourceId[] = ['gold', 'insight', 'renown', 'moonpetal', 'ironOre', 'spiritDust'];
+const CAP_IDS = ['gold', 'insight', 'moonpetal', 'ironOre', 'spiritDust'] as const;
 const VITAL_IDS = ['life', 'stamina', 'mana'] as const;
 
 // Match the sim's affordability tolerance (systems/tasks.ts canAfford) so a resource or
@@ -152,9 +174,11 @@ export function normalize(state: GameState): void {
   // first run-based render AND outside safeLoad's guard, so a save that parses+validates
   // but lacks settings (the migrate v0 target, or a foreign/hand-edited .aasave) would
   // otherwise throw a TypeError on import/boot. Default it alongside the run.* backfills.
-  state.settings ??= { notation: 'suffix', theme: 'system' };
+  state.settings ??= { notation: 'suffix', theme: 'system', chronicleLines: 8, font: 'mono' };
   state.settings.notation ??= 'suffix';
   state.settings.theme ??= 'system';
+  if (typeof state.settings.chronicleLines !== 'number') state.settings.chronicleLines = 8;
+  if (typeof state.settings.font !== 'string') state.settings.font = 'mono';
 
   const run = state.run;
   if (!run || typeof run !== 'object') return; // validate() will reject a missing run
@@ -168,7 +192,20 @@ export function normalize(state: GameState): void {
   if (typeof run.act !== 'number') run.act = 1;
   if (typeof run.activitySlots !== 'number') run.activitySlots = STARTING.activitySlots;
 
-  run.caps ??= { insight: STARTING.insightCap };
+  // home (v0.1.1) — read models spread run.home.equipped/owned on render, so back it up.
+  if (!run.home || typeof run.home !== 'object') run.home = { tier: 'vagrant', owned: [], equipped: [] };
+  if (typeof run.home.tier !== 'string') run.home.tier = 'vagrant';
+  if (!Array.isArray(run.home.owned)) run.home.owned = [];
+  if (!Array.isArray(run.home.equipped)) run.home.equipped = [];
+
+  // Backfill ABSENT (undefined) cap keys only — a present-but-garbage value (e.g. a
+  // null from a serialized Infinity/NaN) is left for validate() to reject, never healed.
+  run.caps ??= {} as GameState['run']['caps'];
+  if (run.caps.gold === undefined) run.caps.gold = STARTING.goldCap;
+  if (run.caps.insight === undefined) run.caps.insight = STARTING.insightCap;
+  if (run.caps.moonpetal === undefined) run.caps.moonpetal = STARTING.materialCap;
+  if (run.caps.ironOre === undefined) run.caps.ironOre = STARTING.materialCap;
+  if (run.caps.spiritDust === undefined) run.caps.spiritDust = STARTING.materialCap;
 
   run.resources ??= {} as GameState['run']['resources'];
   for (const id of RESOURCE_IDS) run.resources[id] ??= 0;
@@ -225,8 +262,18 @@ function validate(state: GameState): void {
     }
   }
 
-  if (!run.caps || typeof run.caps.insight !== 'number' || !Number.isFinite(run.caps.insight)) {
-    throw new Error('Save has an invalid insight cap.');
+  if (!run.caps || typeof run.caps !== 'object') throw new Error('Save missing caps.');
+  for (const capId of CAP_IDS) {
+    const c = run.caps[capId];
+    if (typeof c !== 'number' || !Number.isFinite(c)) {
+      throw new Error(`Save has an invalid ${capId} cap.`);
+    }
+  }
+
+  if (!run.home || typeof run.home !== 'object') throw new Error('Save missing home.');
+  if (typeof run.home.tier !== 'string') throw new Error('Save home.tier is not a string.');
+  if (!Array.isArray(run.home.owned) || !Array.isArray(run.home.equipped)) {
+    throw new Error('Save home.owned/equipped must be arrays.');
   }
 
   if (run.essence && typeof run.essence === 'object') {
@@ -243,4 +290,10 @@ function validate(state: GameState): void {
   if (typeof state.lastSaved !== 'number' || !Number.isFinite(state.lastSaved)) {
     throw new Error('Save has invalid lastSaved.');
   }
+
+  if (!state.settings || typeof state.settings !== 'object') throw new Error('Save missing settings.');
+  if (typeof state.settings.chronicleLines !== 'number' || !Number.isFinite(state.settings.chronicleLines)) {
+    throw new Error('Save has invalid chronicleLines setting.');
+  }
+  if (typeof state.settings.font !== 'string') throw new Error('Save has invalid font setting.');
 }

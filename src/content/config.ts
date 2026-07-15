@@ -47,11 +47,15 @@ export const STARTING = {
   moonpetal: 0,
   ironOre: 0,
   spiritDust: 0,
+  goldCap: 50, // BASE Gold cap — raised by equipping Coin Pouch / Strongbox (effectiveCap)
   insightCap: 100,
+  materialCap: 50, // BASE cap on each material (moonpetal / ironOre / spiritDust) — raised by Warded Chest
   activitySlots: 2, // continuous-task capacity at the Origin (raised to 3 by "Widen the Study")
-  life: { cur: 20, max: 20, regen: 0.2 },
-  stamina: { cur: 10, max: 10, regen: 0.5 },
-  mana: { cur: 0, max: 10, regen: 0.2 },
+  // Vitals rework (v0.1.1): tighter Life/Stamina, and Mana LOCKED (max 0 / regen 0)
+  // until the "Inner Wellspring" cantrip unlocks it.
+  life: { cur: 10, max: 10, regen: 0.1 },
+  stamina: { cur: 5, max: 5, regen: 0.15 },
+  mana: { cur: 0, max: 0, regen: 0 },
 };
 
 // (The T-002 placeholder generator was retired in T-004 — production now flows

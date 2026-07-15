@@ -12,7 +12,6 @@
 
 import type { ElementId, ResourceId } from '../engine/state';
 import { CONTRACTS } from './contracts';
-import { HOME_TASKS } from './home';
 import { FOUNDING_TASKS } from './founding';
 
 export type TaskType = 'instant' | 'running' | 'perpetual' | 'limited';
@@ -55,16 +54,20 @@ export interface TaskDef {
   id: string;
   name: string;
   type: TaskType;
-  tag: string; // category label (docs/10 §5) — also the raw group the UI splits on (Contract/Fixture/Founding)
+  tag: string; // category label (docs/10 §5) — also the raw group the UI splits on (Contract/Founding/Odd Jobs)
   cls: string; // coloured left-edge / element class — matches a CSS var name (gold, insight, fire, dark…)
-  panel?: 'main' | 'home'; // which tab hosts the card (default 'main'; fixtures + the Founding → 'home') — T-006
+  panel?: 'main' | 'home'; // which tab hosts the card (default 'main'; the Founding → 'home') — T-006
   chip?: string; // chip label override; defaults from type
+  job?: boolean; // an Odd Job — Tool Belt's jobOutputMult applies to its output (v0.1.1)
   length?: number; // seconds — running & timed-limited
   max?: number; // limited: how many times it can ever complete
   repeatable?: boolean; // running: default state of the ↻ repeat toggle
   startCost?: Amount[]; // paid once per start / per instant "do" / per running cycle restart
   runCost?: Amount[]; // paid every second while active (drives auto-pause)
   output?: Amount[]; // instant→on do · running/limited→lump on completion · perpetual→per second
+  // Deterministic random loot (Scavenge): on completion, pick ONE id uniformly via the
+  // seeded RNG (advances state.rngState) and grant `amount` of it (respecting caps).
+  randomOutput?: { pool: 'resource'; ids: AmountId[]; amount: number };
   atN?: AtN[];
   requires?: Requirement[];
   effects?: TaskEffect[];
@@ -76,13 +79,61 @@ const A = (pool: Pool, id: AmountId, amount: number): Amount => ({ pool, id, amo
  *  Contracts, Home fixtures, and the Founding are composed onto the end (see TASKS). */
 const CORE_TASKS: TaskDef[] = [
   {
+    // The always-available floor: beg for coppers. Free (no Stamina), so a penniless,
+    // Stamina-drained mage can ALWAYS earn a trickle of Gold.
+    id: 'begging',
+    name: 'Beg for Coppers',
+    type: 'instant',
+    tag: 'Odd Jobs',
+    cls: 'gold',
+    job: true,
+    output: [A('resource', 'gold', 0.1)],
+  },
+  {
     id: 'clean-stables',
     name: 'Clean Stables',
     type: 'instant',
-    tag: 'Starting Out',
+    tag: 'Odd Jobs',
     cls: 'gold',
+    job: true,
     startCost: [A('vital', 'stamina', 1)],
-    output: [A('resource', 'gold', 2.5)],
+    output: [A('resource', 'gold', 0.25)],
+  },
+  {
+    // Steady day-labour — unlocked once you've mucked out enough stables to be trusted.
+    id: 'find-work',
+    name: 'Find Work',
+    type: 'instant',
+    tag: 'Odd Jobs',
+    cls: 'gold',
+    job: true,
+    startCost: [A('vital', 'stamina', 2)],
+    output: [A('resource', 'gold', 0.8)],
+    atN: [{ at: 10, bonus: 0.4 }], // At 10: the regulars know you — +0.4 Gold per job
+    requires: [{ kind: 'taskCount', id: 'clean-stables', atLeast: 20 }],
+  },
+  {
+    // The best Odd Job — errands across town, once you're a known day-labourer.
+    id: 'run-errands',
+    name: 'Run Errands',
+    type: 'instant',
+    tag: 'Odd Jobs',
+    cls: 'gold',
+    job: true,
+    startCost: [A('vital', 'stamina', 3)],
+    output: [A('resource', 'gold', 1.6)],
+    requires: [{ kind: 'taskCount', id: 'find-work', atLeast: 20 }],
+  },
+  {
+    // Scavenge the ruins for raw materials — random loot, NOT wage-work (no jobOutput mult).
+    id: 'scavenge',
+    name: 'Scavenge',
+    type: 'instant',
+    tag: 'Odd Jobs',
+    cls: 'earth',
+    startCost: [A('vital', 'stamina', 2)],
+    randomOutput: { pool: 'resource', ids: ['moonpetal', 'ironOre', 'spiritDust'], amount: 1 },
+    requires: [{ kind: 'taskCount', id: 'clean-stables', atLeast: 32 }],
   },
   {
     id: 'scribe-scroll',
@@ -93,6 +144,7 @@ const CORE_TASKS: TaskDef[] = [
     startCost: [A('resource', 'insight', 10)],
     output: [A('resource', 'spiritDust', 1)],
     atN: [{ at: 5, bonus: 1 }], // At 5: +1 Spirit Dust per scribe
+    requires: [{ kind: 'skill', id: 'read-the-page' }, { kind: 'flag', flag: 'lairFounded' }],
   },
   {
     id: 'smith',
@@ -145,15 +197,16 @@ const CORE_TASKS: TaskDef[] = [
     length: 8,
     max: 1,
     startCost: [A('resource', 'gold', 60)],
-    requires: [{ kind: 'flag', flag: 'awakened' }],
+    requires: [{ kind: 'flag', flag: 'lairFounded' }],
     effects: [{ kind: 'raiseInsightCap', amount: 150 }], // Insight cap 100 → 250 (exercises caps + the `*` marker)
   },
 ];
 
-/** The full task table the engine iterates: core loop + Renown contracts + Home
- *  fixtures + the Founding finale. Composed here so content stays split by concern
- *  while there remains ONE source of truth the systems + CLI + UI all read. */
-export const TASKS: TaskDef[] = [...CORE_TASKS, ...CONTRACTS, ...HOME_TASKS, ...FOUNDING_TASKS];
+/** The full task table the engine iterates: core loop + Renown contracts + the
+ *  Founding finale. (Home is no longer task-driven — it's tiers + items, see
+ *  content/home.ts.) Composed here so content stays split by concern while there
+ *  remains ONE source of truth the systems + CLI + UI all read. */
+export const TASKS: TaskDef[] = [...CORE_TASKS, ...CONTRACTS, ...FOUNDING_TASKS];
 
 export const TASK_BY_ID: Record<string, TaskDef> = Object.fromEntries(TASKS.map((t) => [t.id, t]));
 

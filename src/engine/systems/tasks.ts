@@ -28,11 +28,19 @@ import {
   type VitalId,
 } from '../../content/tasks';
 import { ELEMENTS, type ElementId, type GameState, type ResourceId, type TaskRuntime } from '../state';
+import { drawRng } from '../rng';
 import { logEvent } from './chronicle';
 import { outputMult } from './skills';
+import { effectiveCap, jobOutputMult } from './home';
 
 const RESOURCE_IDS: ResourceId[] = ['gold', 'insight', 'renown', 'moonpetal', 'ironOre', 'spiritDust'];
 const EPS = 1e-9;
+
+/** Total output multiplier for a task: the global Kindle Focus mult, plus the Tool
+ *  Belt's job-output mult for Odd Jobs (`job:true`) only. */
+function taskOutputScale(state: GameState, def: TaskDef): number {
+  return outputMult(state) * (def.job ? jobOutputMult(state) : 1);
+}
 
 // ---- derived read model (no display strings — the UI/CLI format these) ----
 export interface TaskInfo {
@@ -43,6 +51,7 @@ export interface TaskInfo {
   count: number; // completions
   repeat: boolean;
   locked: boolean; // requirements unmet OR Limited maxed → dim & non-clickable
+  revealed: boolean; // DISPLAY-ONLY: show the card at all (far-locked cards stay hidden)
   maxed: boolean; // Limited && count >= max
   affordable: boolean; // startCost payable right now (ignores slots)
   slotFull: boolean; // continuous, not active, and no free Activity slot
@@ -81,13 +90,15 @@ function addPool(state: GameState, a: Amount, scale: number): void {
   }
 }
 
-function applyAmounts(state: GameState, list: Amount[] | undefined, scale: number): void {
+/** Apply a signed amount list (exported so systems/home reuses it for item/tier costs). */
+export function applyAmounts(state: GameState, list: Amount[] | undefined, scale: number): void {
   if (!list) return;
   for (const a of list) addPool(state, a, scale);
 }
 
-/** Can every cost be paid at `scale` (scale = dt for per-second costs, 1 for lump)? */
-function canAfford(state: GameState, costs: Amount[] | undefined, scale: number): boolean {
+/** Can every cost be paid at `scale` (scale = dt for per-second costs, 1 for lump)?
+ *  Exported so systems/home reuses it for move/buy affordability. */
+export function canAfford(state: GameState, costs: Amount[] | undefined, scale: number): boolean {
   if (!costs) return true;
   for (const c of costs) {
     if (poolCur(state, c.pool, c.id) < c.amount * scale - EPS) return false;
@@ -116,9 +127,11 @@ function getRuntime(state: GameState, id: string): TaskRuntime {
 }
 
 // ---- requirements / effects / scaling ----
-function requirementsMet(state: GameState, def: TaskDef): boolean {
-  if (!def.requires) return true;
-  for (const r of def.requires as Requirement[]) {
+/** Evaluate a Requirement[] gate against the state. Exported so systems/home reuses
+ *  the SAME evaluator for housing-tier + item gates (one source of truth). */
+export function meetsRequirements(state: GameState, requires: Requirement[] | undefined): boolean {
+  if (!requires) return true;
+  for (const r of requires) {
     switch (r.kind) {
       case 'flag':
         if (state.run.flags[r.flag] !== true) return false;
@@ -127,7 +140,7 @@ function requirementsMet(state: GameState, def: TaskDef): boolean {
         if ((state.run.resources[r.id] ?? 0) < r.atLeast) return false;
         break;
       case 'skill':
-        if (!state.run.skills.includes(r.id)) return false;
+        if (!(state.run.skills ?? []).includes(r.id)) return false;
         break;
       case 'taskCount':
         if (peekRuntime(state, r.id).count < r.atLeast) return false;
@@ -135,6 +148,20 @@ function requirementsMet(state: GameState, def: TaskDef): boolean {
     }
   }
   return true;
+}
+
+/** Count how many of a task's requirements are currently UNMET (for the reveal rule). */
+function unmetRequirementCount(state: GameState, def: TaskDef): number {
+  if (!def.requires) return 0;
+  let n = 0;
+  for (const r of def.requires as Requirement[]) {
+    if (!meetsRequirements(state, [r])) n++;
+  }
+  return n;
+}
+
+function requirementsMet(state: GameState, def: TaskDef): boolean {
+  return meetsRequirements(state, def.requires as Requirement[] | undefined);
 }
 
 function applyEffect(state: GameState, e: TaskEffect): void {
@@ -181,14 +208,30 @@ function completionText(def: TaskDef, outs: Amount[]): string {
   return `${def.name}: ${parts.join(', ')}.`;
 }
 
+/** Deterministic random loot (Scavenge): pick ONE id via the seeded RNG (advancing
+ *  state.rngState so it survives save/load), grant `amount` respecting the effective
+ *  cap, and chronicle it. No-op unless the def declares randomOutput. */
+function grantRandomOutput(state: GameState, def: TaskDef): void {
+  if (!def.randomOutput) return;
+  const { ids, amount } = def.randomOutput;
+  if (!ids.length) return;
+  const idx = drawRng(state, (r) => r.int(0, ids.length - 1));
+  const chosen = ids[idx] as ResourceId;
+  const cap = effectiveCap(state, chosen);
+  const cur = state.run.resources[chosen] ?? 0;
+  state.run.resources[chosen] = Math.min(cap, cur + amount);
+  logEvent(state, `${def.name}: +${amount} ${AMOUNT_LABEL[chosen] ?? chosen}.`, 'ev');
+}
+
 // ---- per-step advance ----
 /** Grant one cycle's output, bump count, run completion effects, chronicle it. */
 function completeCycle(state: GameState, def: TaskDef, rt: TaskRuntime): void {
   const outs = effectiveOutput(def, rt.count);
-  applyAmounts(state, outs, outputMult(state)); // Kindle Focus (+% all output)
+  applyAmounts(state, outs, taskOutputScale(state, def)); // Kindle Focus + Tool Belt (jobs)
+  grantRandomOutput(state, def);
   rt.count += 1;
   if (def.effects) for (const e of def.effects) applyEffect(state, e);
-  logEvent(state, completionText(def, outs), 'ev');
+  if (outs.length || !def.randomOutput) logEvent(state, completionText(def, outs), 'ev');
 }
 
 /** After a completion, decide whether the task keeps running. Returns true to carry on. */
@@ -224,7 +267,7 @@ function stepTask(state: GameState, def: TaskDef, rt: TaskRuntime, dt: number): 
   }
 
   if (def.type === 'perpetual') {
-    applyAmounts(state, def.output, dt * outputMult(state)); // Kindle Focus (+% all output)
+    applyAmounts(state, def.output, dt * taskOutputScale(state, def)); // Kindle Focus (+% all output)
     return;
   }
 
@@ -270,10 +313,11 @@ export function doTask(state: GameState, id: string): boolean {
   const rt = getRuntime(state, id);
   applyAmounts(state, def.startCost, -1);
   const outs = effectiveOutput(def, rt.count);
-  applyAmounts(state, outs, outputMult(state)); // Kindle Focus (+% all output)
+  applyAmounts(state, outs, taskOutputScale(state, def)); // Kindle Focus + Tool Belt (jobs)
+  grantRandomOutput(state, def);
   rt.count += 1;
   if (def.effects) for (const e of def.effects) applyEffect(state, e);
-  logEvent(state, completionText(def, outs), 'ev');
+  if (outs.length || !def.randomOutput) logEvent(state, completionText(def, outs), 'ev');
   return true;
 }
 
@@ -330,9 +374,10 @@ export function slotsUsed(state: GameState): number {
   return n;
 }
 
-/** The storage cap for a resource, or Infinity if uncapped. Only Insight is capped in v0.1. */
+/** The EFFECTIVE storage cap for a resource (base cap + item/tier `max` mods), or
+ *  Infinity if uncapped (Renown). Delegates to systems/home so caps read one way. */
 function resourceCap(state: GameState, id: ResourceId): number {
-  return id === 'insight' ? state.run.caps.insight : Infinity;
+  return effectiveCap(state, id);
 }
 
 /** Per-second net contribution of a task *while running* (resources + vitals + essence).
@@ -375,6 +420,9 @@ export function taskInfo(state: GameState, def: TaskDef): TaskInfo {
   const rt = peekRuntime(state, def.id);
   const maxed = def.type === 'limited' && rt.count >= (def.max ?? 1);
   const locked = !requirementsMet(state, def) || maxed;
+  // Reveal (display-only): active, ever done, requirements met, or at most one
+  // requirement away. Far-locked cards (≥2 unmet) stay hidden until they're close.
+  const revealed = rt.active || rt.count > 0 || unmetRequirementCount(state, def) <= 1;
   const affordable = canAfford(state, def.startCost, 1);
   const cont = isContinuous(def);
   const freeSlots = activitySlots(state) - slotsUsed(state);
@@ -395,6 +443,7 @@ export function taskInfo(state: GameState, def: TaskDef): TaskInfo {
     count: rt.count,
     repeat: rt.repeat,
     locked,
+    revealed,
     maxed,
     affordable,
     slotFull,

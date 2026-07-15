@@ -45,7 +45,8 @@ describe('simulate() fixed-timestep consistency', () => {
     const s = newGame(1);
     s.run.caps.insight = 1e9;
     s.run.flags.awakened = true; // Study is gated behind the spark (T-005)
-    startTask(s, 'study'); // drain 0.2/s < regen 0.5/s → never pauses; output is linear
+    s.run.vitals.stamina.regen = 1; // headroom > Study's 0.2/s drain so it never pauses (v0.1.1 base regen is 0.15)
+    startTask(s, 'study'); // output is linear over the whole run
     const SECONDS = 3 * 3600;
     simulate(s, SECONDS);
     // Correct fixed-stepping runs Study the whole time: ~0.55 * 10800 = 5940.
@@ -169,7 +170,7 @@ describe('save robustness: normalize + validate', () => {
     delete s.settings;
     const res = safeLoad(serialize(s as never));
     expect(res.ok).toBe(true);
-    expect(res.state!.settings).toEqual({ notation: 'suffix', theme: 'system' });
+    expect(res.state!.settings).toEqual({ notation: 'suffix', theme: 'system', chronicleLines: 8, font: 'mono' });
     expect(() => toView(res.state!)).not.toThrow();
   });
 
@@ -194,6 +195,7 @@ describe('foreground offline catch-up', () => {
     const s = newGame(1);
     s.run.caps.insight = 1e9;
     s.run.flags.awakened = true; // Study is gated behind the spark (T-005)
+    s.run.vitals.stamina.regen = 1; // headroom so Study never pauses under the tight v0.1.1 budget
     startTask(s, 'study'); // 0.55/s
     const AWAY_MS = 10 * 60 * 1000; // 10 min backgrounded (rAF paused)
     const now = s.lastSaved + AWAY_MS;
@@ -218,6 +220,7 @@ describe('foreground offline catch-up', () => {
     const s2 = newGame(1);
     s2.run.caps.insight = 1e9;
     s2.run.flags.awakened = true; // Study is gated behind the spark (T-005)
+    s2.run.vitals.stamina.regen = 1; // headroom so Study never pauses (v0.1.1)
     startTask(s2, 'study');
     s2.lastSaved = now - AWAY_MS;
     applyOffline(s2, now);

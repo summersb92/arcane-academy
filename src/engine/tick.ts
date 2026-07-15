@@ -2,11 +2,15 @@
 // so the same step() runs in the browser rAF loop, in `simulate()` for tests, and
 // in the CLI headlessly. The real-time driver (requestAnimationFrame) lives in the UI.
 
-import type { GameState } from './state';
+import type { GameState, ResourceId, VitalId } from './state';
 import { runTasks } from './systems/tasks';
 import { runEssence } from './systems/essence';
-import { runHome } from './systems/home';
+import { runHome, effectiveCap, effectiveRegen } from './systems/home';
 import { runProgression } from './systems/progression';
+
+/** Resources with a storage cap (Renown is uncapped). Clamped via effectiveCap each tick. */
+const CAPPED_RESOURCES: ResourceId[] = ['gold', 'insight', 'moonpetal', 'ironOre', 'spiritDust'];
+const VITALS: VitalId[] = ['stamina', 'mana', 'life'];
 
 export const TICK = 0.1; // seconds per fixed step
 export const MAX_CATCHUP_STEPS = 100_000; // bounds a single advance()
@@ -21,19 +25,20 @@ export function step(state: GameState, dt: number): void {
   // --- tasks (the Task/Activity system drives all production; runs before caps) ---
   runTasks(state, dt);
 
-  // --- essence (cantrip-awakened per-element trickle; not capped in v0.1) ---
+  // --- essence (cantrip- + Home-item-awakened per-element trickle; not capped) ---
   runEssence(state, dt);
 
-  // --- home (Study Desk's passive Insight; runs BEFORE the cap clamp) ---
+  // --- home upkeep (current tier's rent; runs BEFORE the cap clamp) ---
   runHome(state, dt);
 
-  // --- caps ---
-  if (run.resources.insight > run.caps.insight) run.resources.insight = run.caps.insight;
+  // --- caps (Gold + Insight + each material; excess is LOST — effective cap = base + item mods) ---
+  for (const id of CAPPED_RESOURCES) {
+    const cap = effectiveCap(state, id);
+    if (run.resources[id] > cap) run.resources[id] = cap;
+  }
 
-  // --- vital regen ---
-  regen(run.vitals.stamina, dt);
-  regen(run.vitals.mana, dt);
-  regen(run.vitals.life, dt);
+  // --- vital regen (effective rate = base vital.regen + item `rate` mods; no double-count) ---
+  for (const v of VITALS) regen(run.vitals[v], effectiveRegen(state, v), dt);
 
   state.playtime += dt;
 
@@ -41,8 +46,8 @@ export function step(state: GameState, dt: number): void {
   runProgression(state);
 }
 
-function regen(v: { cur: number; max: number; regen: number }, dt: number): void {
-  if (v.cur < v.max) v.cur = Math.min(v.max, v.cur + v.regen * dt);
+function regen(v: { cur: number; max: number }, rate: number, dt: number): void {
+  if (v.cur < v.max) v.cur = Math.min(v.max, v.cur + rate * dt);
 }
 
 /**

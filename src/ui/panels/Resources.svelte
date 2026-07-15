@@ -6,6 +6,9 @@
   $: insightNearCap =
     $game.resources.insight.cap !== undefined &&
     $game.resources.insight.amount >= $game.resources.insight.cap * 0.9;
+  $: goldNearCap =
+    $game.resources.gold.cap !== undefined &&
+    $game.resources.gold.amount >= $game.resources.gold.cap * 0.9;
 </script>
 
 <div class="left">
@@ -13,7 +16,15 @@
   <div class="row">
     <span class="nm g">⦿ Gold</span>
     <span>
-      <span class="vl">{fmt($game.resources.gold.amount)}</span>
+      <span
+        class="vl"
+        class:amber={goldNearCap}
+        title={$game.resources.gold.atCap
+          ? 'Gold at its cap — income is wasted until you raise it (buy a Coin Pouch / Strongbox on Home)'
+          : ''}
+      >
+        {fmt($game.resources.gold.amount)}{#if $game.resources.gold.cap !== undefined}<span class="lockt"> / {fmt($game.resources.gold.cap)}</span>{/if}
+      </span>
       <span class="rt" title={$game.resources.gold.rateTip ?? ''}>{fmtRate($game.resources.gold.rate)}</span>
     </span>
   </div>

@@ -11,17 +11,21 @@ import {
   activitySlots,
   taskRates,
   listTaskInfo,
+  taskInfo,
 } from '../src/engine/systems/tasks';
+import { buyItem, equipItem, moveHome, effectiveCap } from '../src/engine/systems/home';
+import { learnCantrip } from '../src/engine/systems/skills';
+import { TASK_BY_ID } from '../src/content/tasks';
 
 describe('instant tasks', () => {
   it('Clean Stables pays Stamina and grants Gold, once per do', () => {
     const s = newGame(1);
     expect(doTask(s, 'clean-stables')).toBe(true);
-    expect(s.run.resources.gold).toBeCloseTo(2.5, 6);
-    expect(s.run.vitals.stamina.cur).toBeCloseTo(9, 6);
+    expect(s.run.resources.gold).toBeCloseTo(0.25, 6); // v0.1.1: 0.25 (was 2.5)
+    expect(s.run.vitals.stamina.cur).toBeCloseTo(4, 6); // Stamina max 5, cost 1
 
     doTask(s, 'clean-stables');
-    expect(s.run.resources.gold).toBeCloseTo(5, 6);
+    expect(s.run.resources.gold).toBeCloseTo(0.5, 6);
     expect(s.run.tasks['clean-stables'].count).toBe(2);
   });
 
@@ -105,6 +109,8 @@ describe('auto-pause / auto-resume', () => {
 describe('At-N repeat scaling', () => {
   it('Scribe Scroll gains +1 output once it has been completed 5 times', () => {
     const s = newGame(1);
+    s.run.flags.lairFounded = true; // Scribe Scroll is now gated on the lair…
+    s.run.skills = ['read-the-page']; // …and on Read the Page (v0.1.1)
     s.run.resources.insight = 1000; // plenty to afford 6 scribes (10 each)
 
     for (let i = 0; i < 5; i++) doTask(s, 'scribe-scroll');
@@ -120,6 +126,11 @@ describe('At-N repeat scaling', () => {
 describe('running tasks', () => {
   it('Smith completes a timed cycle, pays a Gold lump, and repeats', () => {
     const s = newGame(1);
+    // Smith drains Stamina 0.4/s; give it headroom so the mechanic (not the tight
+    // v0.1.1 Stamina budget) is what this test observes.
+    s.run.vitals.stamina.max = 100;
+    s.run.vitals.stamina.cur = 100;
+    s.run.vitals.stamina.regen = 5;
     expect(startTask(s, 'smith')).toBe(true); // repeatable by default
     expect(s.run.tasks['smith'].repeat).toBe(true);
 
@@ -145,7 +156,7 @@ describe('running tasks', () => {
 describe('timed completion epsilon (playtest fix)', () => {
   it('a length:8 Limited task completes at EXACTLY its duration — no one-tick-late strand', () => {
     const s = newGame(1);
-    s.run.flags.awakened = true; // Grand Library requires the spark
+    s.run.flags.lairFounded = true; // Grand Library is now gated on the lair (v0.1.1)
     s.run.resources.gold = 100;
     expect(startTask(s, 'grand-library')).toBe(true); // length 8; raiseInsightCap 150
     expect(slotsUsed(s)).toBe(1);
@@ -162,7 +173,7 @@ describe('timed completion epsilon (playtest fix)', () => {
 
   it('the exact-duration completion is identical via offline catch-up (advanceFixed path)', () => {
     const s = newGame(1);
-    s.run.flags.awakened = true;
+    s.run.flags.lairFounded = true;
     s.run.resources.gold = 100;
     startTask(s, 'grand-library');
     s.lastSaved = Date.now() - 8000; // exactly 8s away
@@ -175,6 +186,11 @@ describe('timed completion epsilon (playtest fix)', () => {
     const s = newGame(1);
     s.run.flags.awakened = true;
     s.run.caps.insight = 1e9; // keep Study output observable
+    // Give Stamina headroom so Study (0.2/s) + Smith (0.4/s) don't auto-pause under the
+    // tight v0.1.1 budget — this test is about the timestep math, not scarcity.
+    s.run.vitals.stamina.max = 1000;
+    s.run.vitals.stamina.cur = 1000;
+    s.run.vitals.stamina.regen = 50;
     startTask(s, 'study'); // perpetual (Insight +0.55/s)
     startTask(s, 'smith'); // running, length 15, repeatable
     simulate(s, 46); // 3 Smith cycles (15/30/45), Study trickles the whole time
@@ -187,7 +203,7 @@ describe('timed completion epsilon (playtest fix)', () => {
 describe('limited start-cost rate (display fix)', () => {
   it('a building Limited task shows no phantom per-second start-cost drain', () => {
     const s = newGame(1);
-    s.run.flags.awakened = true;
+    s.run.flags.lairFounded = true;
     s.run.resources.gold = 100;
     expect(startTask(s, 'grand-library')).toBe(true); // pays Gold 60 ONCE at start
     expect(s.run.resources.gold).toBeCloseTo(40, 6);
@@ -197,5 +213,112 @@ describe('limited start-cost rate (display fix)', () => {
     expect(taskRates(s).resources.gold ?? 0).toBe(0);
     const gl = listTaskInfo(s).find((i) => i.id === 'grand-library')!;
     expect(gl.net.gold ?? 0).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.1.1 — Odd Jobs ladder + card reveal + Home items/caps + learnable Mana
+// ---------------------------------------------------------------------------
+describe('card reveal (display-only)', () => {
+  it('a far-locked task is hidden; a one-away task is revealed', () => {
+    const s = newGame(1);
+    // Scribe Scroll needs BOTH Read the Page AND the lair — 2 unmet reqs at the
+    // Origin → far-locked → hidden.
+    expect(taskInfo(s, TASK_BY_ID['scribe-scroll']).revealed).toBe(false);
+
+    // Satisfy one of the two → now exactly one requirement away → revealed.
+    s.run.flags.lairFounded = true;
+    expect(taskInfo(s, TASK_BY_ID['scribe-scroll']).revealed).toBe(true);
+
+    // find-work has ONE requirement (clean-stables ×20) → one-away → revealed even
+    // before it's actually unlocked.
+    expect(taskInfo(s, TASK_BY_ID['find-work']).revealed).toBe(true);
+
+    // begging has no requirements → always revealed.
+    expect(taskInfo(s, TASK_BY_ID['begging']).revealed).toBe(true);
+  });
+
+  it('reveal never changes gating: a revealed-but-locked task is still not startable', () => {
+    const s = newGame(1);
+    const info = taskInfo(s, TASK_BY_ID['find-work']);
+    expect(info.revealed).toBe(true);
+    expect(info.locked).toBe(true); // clean-stables ×20 not met
+    expect(doTask(s, 'find-work')).toBe(false); // gating unchanged
+  });
+});
+
+describe('Home items: Gold cap', () => {
+  it('equipping a Coin Pouch raises the effective Gold cap and the tick clamps to it', () => {
+    const s = newGame(1);
+    expect(effectiveCap(s, 'gold')).toBe(50); // base cap
+    s.run.resources.gold = 30;
+    expect(buyItem(s, 'coin-pouch')).toBe(true);
+    expect(equipItem(s, 'coin-pouch')).toBe(true);
+    expect(effectiveCap(s, 'gold')).toBe(100); // 50 + 50
+
+    s.run.resources.gold = 200; // over the new cap
+    step(s, 0.1);
+    expect(s.run.resources.gold).toBe(100); // clamped to the effective cap (excess lost)
+  });
+});
+
+describe('Odd Jobs: Tool Belt job-output multiplier', () => {
+  it('equipping the Tool Belt scales a job task output (×1.2), non-jobs unaffected', () => {
+    const s = newGame(1);
+    s.run.resources.gold = 40;
+    expect(buyItem(s, 'tool-belt')).toBe(true);
+    expect(equipItem(s, 'tool-belt')).toBe(true); // vagrant has 1 slot
+
+    // Begging is a job (base +0.1 Gold) → ×1.2 = 0.12.
+    s.run.resources.gold = 0;
+    expect(doTask(s, 'begging')).toBe(true);
+    expect(s.run.resources.gold).toBeCloseTo(0.12, 6);
+  });
+});
+
+describe('Scavenge: deterministic random loot', () => {
+  it('grants exactly one material, picked deterministically for a fixed seed', () => {
+    const run = () => {
+      const s = newGame(4242);
+      s.run.tasks['clean-stables'] = { active: false, progress: 0, paused: false, count: 32, repeat: false };
+      expect(doTask(s, 'scavenge')).toBe(true); // stamina 5 ≥ 2
+      const { moonpetal, ironOre, spiritDust } = s.run.resources;
+      return { moonpetal, ironOre, spiritDust, rng: s.rngState };
+    };
+    const a = run();
+    const b = run();
+    expect(a).toEqual(b); // same seed → same draw → same material (deterministic)
+
+    // Exactly one material got +1, and the RNG state advanced.
+    const total = a.moonpetal + a.ironOre + a.spiritDust;
+    expect(total).toBe(1);
+    expect(a.rng).not.toBe(newGame(4242).rngState);
+  });
+});
+
+describe('learnable Mana (Inner Wellspring)', () => {
+  it('unlocks Mana: sets max 10 / regen 0.1, and it then regenerates', () => {
+    const s = newGame(1);
+    expect(s.run.vitals.mana.max).toBe(0); // locked at the start
+    s.run.resources.insight = 100;
+    expect(learnCantrip(s, 'read-the-page')).toBe(true);
+    expect(learnCantrip(s, 'inner-wellspring')).toBe(true);
+    expect(s.run.vitals.mana.max).toBe(10);
+    expect(s.run.vitals.mana.regen).toBeCloseTo(0.1, 6);
+
+    const before = s.run.vitals.mana.cur;
+    step(s, 1);
+    expect(s.run.vitals.mana.cur).toBeCloseTo(before + 0.1, 6);
+  });
+});
+
+describe('Inn rent', () => {
+  it('living at the Inn drains Gold each second (no eviction, floored at 0)', () => {
+    const s = newGame(1);
+    s.run.flags.lairFounded = true; // Inn requires the lair beat
+    expect(moveHome(s, 'inn')).toBe(true);
+    s.run.resources.gold = 10;
+    step(s, 1); // rent 0.1/s
+    expect(s.run.resources.gold).toBeCloseTo(9.9, 6);
   });
 });

@@ -7,7 +7,14 @@ import { newGame } from '../src/engine/state';
 import { simulate, step } from '../src/engine/tick';
 import { startTask, listTaskInfo } from '../src/engine/systems/tasks';
 import { essenceBase, essenceRates } from '../src/engine/systems/essence';
-import { homeInsightPerSec, fixtureLevel } from '../src/engine/systems/home';
+import {
+  buyItem,
+  equipItem,
+  moveHome,
+  homeResourceRates,
+  effectiveCap,
+} from '../src/engine/systems/home';
+import { learnCantrip } from '../src/engine/systems/skills';
 import { foundingStatus, canFound } from '../src/engine/systems/founding';
 import { runProgression, isAwakened } from '../src/engine/systems/progression';
 import { FOUNDING, LAIR } from '../src/content/config';
@@ -67,58 +74,114 @@ describe('contracts (Renown source)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Home fixtures — sinks that raise production (via essenceBase / homeInsight)
+// Home items & tiers (v0.1.1) — buy/equip Modifiers that raise production/caps
 // ---------------------------------------------------------------------------
-describe('home fixtures (sinks)', () => {
-  it('building a Hearth raises Fire essence via essenceBase() and consumes Gold + material', () => {
-    const s = hedgeMage(5);
-    s.run.resources.gold = 100;
-    s.run.resources.ironOre = 10;
-    const beforeFire = essenceBase(s).fire ?? 0; // Spark's 0.2
-    const goldBefore = s.run.resources.gold;
+describe('home items & tiers', () => {
+  it('equipping a Hearth Stone awakens ▲ Fire and adds its trickle via essenceBase()', () => {
+    const s = newGame(5); // fresh: no Spark, Fire asleep
+    s.run.resources.gold = 25;
+    s.run.resources.ironOre = 2;
+    expect(s.run.essence.fire.awakened).toBe(false);
 
-    expect(startTask(s, 'hearth')).toBe(true);
-    expect(s.run.resources.gold).toBe(goldBefore - 25); // startCost paid
-    expect(s.run.resources.ironOre).toBe(8);
-    simulate(s, 7); // length 6 → level 1
+    expect(buyItem(s, 'hearth-stone')).toBe(true);
+    expect(s.run.resources.gold).toBe(0); // cost 25 paid
+    expect(s.run.resources.ironOre).toBe(0); // cost 2 paid
+    expect(equipItem(s, 'hearth-stone')).toBe(true); // awakens Fire on equip
 
-    expect(fixtureLevel(s, 'hearth')).toBe(1);
-    const afterFire = essenceBase(s).fire ?? 0;
-    expect(afterFire).toBeGreaterThan(beforeFire);
-    expect(afterFire).toBeCloseTo(0.2 + 0.15, 6); // Spark + Hearth L1
-    expect(essenceRates(s).fire).toBeCloseTo(0.35, 6); // ×1.0 output mult
+    expect(s.run.essence.fire.awakened).toBe(true);
+    expect(essenceBase(s).fire).toBeCloseTo(0.15, 6);
+    expect(essenceRates(s).fire).toBeCloseTo(0.15, 6); // ×1.0 output mult
   });
 
-  it('building a Study Desk adds passive Insight/s (folded in before the cap clamp)', () => {
-    const s = hedgeMage(6);
-    s.run.resources.gold = 100;
-    s.run.resources.insight = 50;
-    s.run.resources.spiritDust = 10;
-    s.run.caps.insight = 1e9; // observe the rate cleanly
-    expect(homeInsightPerSec(s)).toBe(0);
+  it('equipping a Focusing Lens adds passive Insight/s (produced by runHome, before the cap clamp)', () => {
+    const s = newGame(6);
+    s.run.resources.gold = 30;
+    s.run.resources.spiritDust = 2;
+    expect(homeResourceRates(s).insight ?? 0).toBe(0);
 
-    expect(startTask(s, 'study-desk')).toBe(true);
-    expect(s.run.resources.insight).toBe(25); // 50 - 25 insight cost (Insight IS a sink)
-    simulate(s, 6); // length 5 → level 1
-    expect(fixtureLevel(s, 'study-desk')).toBe(1);
-    expect(homeInsightPerSec(s)).toBeCloseTo(0.12, 6);
+    expect(buyItem(s, 'focusing-lens')).toBe(true);
+    expect(equipItem(s, 'focusing-lens')).toBe(true);
+    expect(homeResourceRates(s).insight).toBeCloseTo(0.12, 6);
 
-    const before = s.run.resources.insight;
+    s.run.resources.insight = 0;
     step(s, 10);
-    expect(s.run.resources.insight).toBeCloseTo(before + 0.12 * 10, 5);
+    expect(s.run.resources.insight).toBeCloseTo(0.12 * 10, 5); // +0.12/s for 10s
   });
 
-  it('the Ossuary awakens ☾ Dark on build, then trickles it', () => {
-    const s = hedgeMage(7);
-    s.run.resources.gold = 100;
-    s.run.resources.spiritDust = 10;
-    expect(s.run.essence.dark.awakened).toBe(false);
+  it('a Coin Pouch raises the effective Gold cap, and a Warded Chest raises material caps', () => {
+    const s = newGame(7);
+    s.run.resources.gold = 70; // enough for both (30 + 40)
+    expect(effectiveCap(s, 'gold')).toBe(50);
+    expect(effectiveCap(s, 'moonpetal')).toBe(50);
 
-    startTask(s, 'ossuary');
-    simulate(s, 9); // length 8 → level 1
-    expect(fixtureLevel(s, 'ossuary')).toBe(1);
-    expect(s.run.essence.dark.awakened).toBe(true);
-    expect(essenceBase(s).dark).toBeCloseTo(0.12, 6);
+    buyItem(s, 'coin-pouch');
+    equipItem(s, 'coin-pouch');
+    expect(effectiveCap(s, 'gold')).toBe(100); // 50 + 50
+
+    buyItem(s, 'warded-chest');
+    equipItem(s, 'warded-chest'); // vagrant only has 1 slot…
+    // …so the second equip fails until we move up; the Coin Pouch stays equipped.
+    expect(s.run.home.equipped).toEqual(['coin-pouch']);
+  });
+
+  it('the Mana Crystal is gated on Inner Wellspring; Inn move is gated on the lair', () => {
+    const s = newGame(8);
+    s.run.resources.gold = 100;
+    // Mana Crystal needs the Inner Wellspring cantrip first.
+    expect(buyItem(s, 'mana-crystal')).toBe(false);
+    s.run.resources.insight = 100;
+    learnCantrip(s, 'read-the-page');
+    learnCantrip(s, 'inner-wellspring');
+    expect(buyItem(s, 'mana-crystal')).toBe(true);
+
+    // Inn requires the lair beat.
+    expect(moveHome(s, 'inn')).toBe(false);
+    s.run.flags.lairFounded = true;
+    expect(moveHome(s, 'inn')).toBe(true);
+    expect(s.run.home.tier).toBe('inn');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The view-model reflects EQUIPPED items (regen/rate readouts, sourced tooltips)
+// ---------------------------------------------------------------------------
+describe('view-model reflects equipped items', () => {
+  it('a Charm of Vigor moves the Character panel Life regen (effective, not base)', () => {
+    const s = newGame(30);
+    const baseLifeRegen = s.run.vitals.life.regen; // 0.1 base
+    s.run.resources.gold = 20;
+    expect(buyItem(s, 'charm-of-vigor')).toBe(true);
+    expect(equipItem(s, 'charm-of-vigor')).toBe(true); // vagrant's single slot
+
+    // The published view shows base + item mod (0.1 + 0.05); the raw vital is untouched.
+    expect(toView(s).vitals.life.regen).toBeCloseTo(baseLifeRegen + 0.05, 6);
+    expect(s.run.vitals.life.regen).toBeCloseTo(baseLifeRegen, 6);
+  });
+
+  it('a Focusing Lens shows in the Insight rate AND its sourced-number tooltip', () => {
+    const s = newGame(31);
+    s.run.resources.gold = 30;
+    s.run.resources.spiritDust = 2;
+    expect(buyItem(s, 'focusing-lens')).toBe(true);
+    expect(equipItem(s, 'focusing-lens')).toBe(true);
+
+    const insight = toView(s).resources.insight;
+    expect(insight.rate).toBeCloseTo(0.12, 6); // home production folds into the shown rate
+    expect(insight.rateTip).toContain('Focusing Lens'); // …and the breakdown names it
+    expect(insight.rateTip).toContain('0.12');
+  });
+
+  it('a Hearth Stone shows in the Fire essence rate AND its sourced-number tooltip', () => {
+    const s = newGame(32);
+    s.run.resources.gold = 25;
+    s.run.resources.ironOre = 2;
+    expect(buyItem(s, 'hearth-stone')).toBe(true);
+    expect(equipItem(s, 'hearth-stone')).toBe(true); // awakens Fire on equip
+
+    const fire = toView(s).essence.find((e) => e.id === 'fire')!;
+    expect(fire.awakened).toBe(true);
+    expect(fire.rate).toBeCloseTo(0.15, 6);
+    expect(fire.rateTip).toContain('Hearth Stone');
   });
 });
 

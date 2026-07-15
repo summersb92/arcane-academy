@@ -14,6 +14,7 @@ import { CANTRIPS, CANTRIP_BY_ID, type Cantrip } from '../../content/cantrips';
 import { AMOUNT_LABEL } from '../../content/tasks';
 import type { ElementId, GameState } from '../state';
 import { logEvent } from './chronicle';
+import { effectiveCap } from './home';
 
 const EPS = 1e-9;
 
@@ -27,9 +28,10 @@ function prereqsMet(state: GameState, def: Cantrip): boolean {
   return def.requires.every((r) => isLearned(state, r));
 }
 
-/** The cost sits above the current Insight cap → it can never be afforded until the cap rises. */
+/** The cost sits above the current Insight cap → it can never be afforded until the cap rises.
+ *  Reads the EFFECTIVE cap (base + any item `max` mods) — the single source of truth. */
 export function exceedsCap(state: GameState, def: Cantrip): boolean {
-  return def.cost > state.run.caps.insight + EPS;
+  return def.cost > effectiveCap(state, 'insight') + EPS;
 }
 
 /** Global output multiplier: 1 + Σ(owned outputMult cantrips). Applied to task output AND essence trickle. */
@@ -54,6 +56,13 @@ function applyCantripEffect(state: GameState, e: Cantrip['effects'][number]): vo
     case 'vitalRegen':
       state.run.vitals[e.vital].regen += e.amount;
       break;
+    case 'unlockVital': {
+      // Inner Wellspring unlocks Mana: set its max + regen (it was locked at max 0 / regen 0).
+      const v = state.run.vitals[e.vital];
+      v.max = e.max;
+      v.regen = e.regen;
+      break;
+    }
     case 'flag':
       state.run.flags[e.flag] = true;
       break;
@@ -109,6 +118,8 @@ function effectText(def: Cantrip): string {
           return `awakens ${AMOUNT_LABEL[e.element] ?? e.element} essence (+${e.trickle}/s)`;
         case 'vitalRegen':
           return `+${e.amount} ${AMOUNT_LABEL[e.vital] ?? e.vital} regen`;
+        case 'unlockVital':
+          return `unlocks ${AMOUNT_LABEL[e.vital] ?? e.vital} (max ${e.max}, +${e.regen}/s)`;
         case 'outputMult':
           return `+${Math.round(e.add * 100)}% all output`;
         case 'openTree':

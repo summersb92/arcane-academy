@@ -73,7 +73,7 @@ describe('cantrips', () => {
     s.run.flags.awakened = true;
     s.run.resources.insight = 1000;
     learnCantrip(s, 'read-the-page');
-    const before = s.run.vitals.stamina.regen; // 0.5
+    const before = s.run.vitals.stamina.regen; // 0.15 (v0.1.1 base)
     expect(learnCantrip(s, 'mend')).toBe(true);
     expect(s.run.vitals.stamina.regen).toBeCloseTo(before + 0.3, 6);
   });
@@ -86,6 +86,7 @@ describe('insight cap', () => {
   it('Umbral Whisper exceeds the base cap until the Grand Library raises it', () => {
     const s = newGame(5);
     s.run.flags.awakened = true;
+    s.run.flags.lairFounded = true; // Grand Library is now gated on the lair (v0.1.1)
     const uw = () => listCantripInfo(s).find((c) => c.id === 'umbral-whisper')!;
     expect(uw().exceedsCap).toBe(true); // cost 120 > base cap 100
 

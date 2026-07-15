@@ -6,14 +6,16 @@
 import { writable } from 'svelte/store';
 import { createAccumulator } from '../engine/tick';
 import { newGame, type GameState, ELEMENTS, type ElementId, type ResourceId } from '../engine/state';
-import { AMOUNT_LABEL, TASKS, type Amount, type TaskDef, type TaskType } from '../content/tasks';
+import { AMOUNT_LABEL, TASKS, type Amount, type Requirement, type TaskDef, type TaskType } from '../content/tasks';
 import { CANTRIP_BY_ID } from '../content/cantrips';
-import { FIXTURE_BY_ID } from '../content/home';
+import { HOME_ITEMS, HOME_TIERS, HOME_TIER_BY_ID, type Modifier } from '../content/home';
 import {
   listTaskInfo,
   taskRates,
   slotsUsed,
   activitySlots,
+  canAfford,
+  meetsRequirements,
   doTask,
   startTask,
   stopTask,
@@ -22,6 +24,19 @@ import {
 } from '../engine/systems/tasks';
 import { learnCantrip as engineLearnCantrip, listCantripInfo, outputMult } from '../engine/systems/skills';
 import { essenceRates } from '../engine/systems/essence';
+import {
+  homeTier,
+  homeSlots,
+  homeSlotsUsed,
+  homeResourceRates,
+  homeRateContribs,
+  effectiveCap,
+  effectiveRegen,
+  moveHome as engineMoveHome,
+  buyItem as engineBuyItem,
+  equipItem as engineEquipItem,
+  unequipItem as engineUnequipItem,
+} from '../engine/systems/home';
 import { canFound, foundingStatus } from '../engine/systems/founding';
 import type { OfflineSummary } from '../engine/offline';
 import { serialize, LOCALSTORAGE_KEY } from '../engine/save';
@@ -63,6 +78,7 @@ export interface TaskView {
   io: string; // cost → output line
   active: boolean;
   locked: boolean; // requirements unmet or Limited maxed → dim & non-clickable
+  revealed: boolean; // DISPLAY-ONLY: whether to show the card (far-locked → hidden)
   paused: boolean;
   progress: number; // 0..1 (timed tasks)
   timed: boolean; // running/limited → show a progress meter
@@ -119,6 +135,36 @@ export interface FoundingView {
   total: number;
   reqs: FoundingReqView[]; // Gold · Renown · Charter · Site
 }
+export interface HomeTierView {
+  id: string;
+  name: string;
+  slots: number;
+  cost: string; // formatted moveCost / rent / "free"
+  locked: boolean; // not the current tier and not reachable now
+  reason?: string; // why locked (from-chain or unmet requirement)
+  current: boolean; // this is where you live
+  reachable: boolean; // from-chain + requirements met (afford handled by the action)
+}
+export interface HomeItemView {
+  id: string;
+  name: string;
+  cost: string; // formatted purchase cost
+  owned: boolean;
+  equipped: boolean;
+  affordable: boolean; // purchasable right now
+  locked: boolean; // requirement unmet (e.g. Mana Crystal needs Inner Wellspring)
+  reason?: string; // why locked
+  modsSummary: string; // human summary of the item's modifiers
+}
+export interface HomeView {
+  tier: string; // current tier id
+  name: string; // current tier name
+  blurb: string;
+  slots: number; // total item slots
+  used: number; // equipped count
+  tiers: HomeTierView[];
+  items: HomeItemView[];
+}
 export interface UiState {
   resources: { gold: ResourceView; insight: ResourceView; renown: ResourceView };
   materials: { moonpetal: number; ironOre: number; spiritDust: number };
@@ -128,6 +174,7 @@ export interface UiState {
   tasks: TaskView[];
   cantrips: CantripView[];
   slots: { used: number; total: number };
+  home: HomeView;
   founding: FoundingView;
   chronicle: ChronicleView[];
 }
@@ -199,15 +246,9 @@ function costLine(def: TaskDef): string {
   const left = cost || '—';
   return out ? `${left} → ${out}` : left;
 }
-/** Home fixtures/Founding tasks have no `output` — their value is a derived per-level
- *  bonus or a milestone, so describe THAT instead of the empty effect summary. */
+/** Founding (Home-tab) tasks have no `output` — their value is a milestone, so
+ *  describe THAT instead of the empty effect summary. */
 function homePayoff(def: TaskDef): string {
-  const fx = FIXTURE_BY_ID[def.id];
-  if (fx) {
-    if (fx.insightPerLevel) return `+${numStr(fx.insightPerLevel)} ${g('insight')}/s per level`;
-    if (fx.essencePerLevel) return `+${numStr(fx.essencePerLevel.amount)} ${g(fx.essencePerLevel.element)}/s per level`;
-    return 'a curiosity for the lair';
-  }
   switch (def.id) {
     case 'secure-charter':
       return 'grants a Guild Charter';
@@ -265,6 +306,7 @@ function buildTaskView(state: GameState, def: TaskDef, info: TaskInfo): TaskView
     io: costLine(def),
     active: info.active,
     locked: info.locked,
+    revealed: info.revealed,
     paused: info.paused,
     progress: info.progress,
     timed: def.type === 'running' || def.type === 'limited',
@@ -291,10 +333,80 @@ function capRaiserName(): string | undefined {
 
 /** A `*` marker + hover when any Insight cost in the list exceeds the current Insight cap. */
 function costCapMark(state: GameState, cost: Amount[] | undefined): { capMark?: string; capNote?: string } {
-  const over = (cost ?? []).some((c) => c.pool === 'resource' && c.id === 'insight' && c.amount > state.run.caps.insight);
+  const cap = effectiveCap(state, 'insight');
+  const over = (cost ?? []).some((c) => c.pool === 'resource' && c.id === 'insight' && c.amount > cap);
   if (!over) return {};
   const raiser = capRaiserName();
   return { capMark: '*', capNote: `exceeds Insight Max${raiser ? ` — build ${raiser} to raise it` : ''}` };
+}
+
+// ---- Home view (housing tiers + equippable items) ----
+const MOD_TARGET_LABEL: Record<string, string> = {
+  gold: 'Gold', insight: 'Insight', moonpetal: 'Moonpetal', ironOre: 'Iron Ore', spiritDust: 'Spirit Dust',
+  life: 'Life', stamina: 'Stamina', mana: 'Mana',
+  prism: 'Prismatic', fire: 'Fire', water: 'Water', earth: 'Earth', air: 'Air', dark: 'Dark', light: 'Light',
+};
+function modLabel(m: Modifier): string {
+  if (m.target === 'jobOutput') return `+${Math.round(m.amount * 100)}% Odd-Job pay`;
+  const name = MOD_TARGET_LABEL[m.target] ?? m.target;
+  return m.kind === 'max' ? `+${numStr(m.amount)} ${name} cap` : `+${numStr(m.amount)} ${name}/s`;
+}
+
+/** First unmet requirement in a list, as a short reason string. */
+function firstUnmetReason(state: GameState, requires: Requirement[] | undefined): string | undefined {
+  for (const r of requires ?? []) {
+    if (meetsRequirements(state, [r])) continue;
+    if (r.kind === 'flag') return `needs ${r.flag}`;
+    if (r.kind === 'skill') return `needs ${CANTRIP_BY_ID[r.id]?.name ?? r.id}`;
+    if (r.kind === 'resource') return `needs ${r.atLeast} ${AMOUNT_LABEL[r.id] ?? r.id}`;
+    if (r.kind === 'taskCount') return `needs ${r.atLeast}× ${r.id}`;
+  }
+  return undefined;
+}
+
+function buildHomeView(state: GameState): HomeView {
+  const home = state.run.home ?? { tier: 'vagrant', owned: [], equipped: [] };
+  const cur = homeTier(state);
+  const tiers: HomeTierView[] = HOME_TIERS.map((t) => {
+    const current = t.id === cur.id;
+    const fromOk = t.from.includes(cur.id);
+    const reqOk = meetsRequirements(state, t.requires);
+    const reachable = !current && fromOk && reqOk;
+    const locked = !current && !reachable;
+    let reason: string | undefined;
+    if (locked) {
+      reason = !fromOk
+        ? `reach from ${t.from.map((id) => HOME_TIER_BY_ID[id]?.name ?? id).join(' / ') || '—'}`
+        : firstUnmetReason(state, t.requires);
+    }
+    const cost = t.moveCost ? tokens(t.moveCost, false) : t.rent ? `${tokens(t.rent, true)} rent` : 'free';
+    return { id: t.id, name: t.name, slots: t.slots, cost, locked, reason, current, reachable };
+  });
+  const items: HomeItemView[] = HOME_ITEMS.map((it) => {
+    const owned = home.owned.includes(it.id);
+    const equipped = home.equipped.includes(it.id);
+    const reqOk = meetsRequirements(state, it.requires);
+    return {
+      id: it.id,
+      name: it.name,
+      cost: tokens(it.cost, false),
+      owned,
+      equipped,
+      affordable: canAfford(state, it.cost, 1),
+      locked: !reqOk,
+      reason: reqOk ? undefined : firstUnmetReason(state, it.requires),
+      modsSummary: it.mods.map(modLabel).join(' · '),
+    };
+  });
+  return {
+    tier: cur.id,
+    name: cur.name,
+    blurb: cur.blurb,
+    slots: homeSlots(state),
+    used: homeSlotsUsed(state),
+    tiers,
+    items,
+  };
 }
 
 /** Sourced-number tooltip for a left-panel resource rate: "+0.61/s = Study 0.55 × Kindle ×1.10". */
@@ -313,6 +425,11 @@ function resourceRateTip(state: GameState, id: ResourceId, atCap: boolean): stri
     }
     if (base > 0) parts.push({ name: def.name, base });
   }
+  // Home producers (Focusing Lens / Mentor's Loft insight, Homestead ore/moonpetal) also
+  // feed the shown rate (totalRate = taskRate + homeRate × mult), so list them here too.
+  for (const c of homeRateContribs(state)) {
+    if (c.target === id && c.amount > 0) parts.push({ name: c.name, base: c.amount });
+  }
   if (!parts.length) return '';
   const base = parts.reduce((s, p) => s + p.base, 0);
   const src = parts.map((p) => `${p.name} ${numStr(p.base)}`).join(' + ');
@@ -329,6 +446,11 @@ function essenceRateTip(state: GameState, id: ElementId): string {
     const def = CANTRIP_BY_ID[sid];
     if (!def) continue;
     for (const e of def.effects) if (e.kind === 'awaken' && e.element === id) parts.push({ name: def.name, base: e.trickle });
+  }
+  // Home essence producers (Hearth Stone → Fire, Wayfarer Tent → Air) trickle too — list
+  // them so the essence breakdown reconciles with the shown rate.
+  for (const c of homeRateContribs(state)) {
+    if (c.target === id && c.amount > 0) parts.push({ name: c.name, base: c.amount });
   }
   if (!parts.length) return '';
   const base = parts.reduce((s, p) => s + p.base, 0);
@@ -367,16 +489,28 @@ export function toView(state: GameState): UiState {
   const rates = taskRates(state);
   const eRates = essenceRates(state); // cantrip-awakened trickle (adds to any task-granted essence)
   const infos = listTaskInfo(state);
-  const insightAtCap = r.insight >= state.run.caps.insight - 1e-9;
+  const homeRates = homeResourceRates(state); // per-second home-item production (Focusing Lens, Homestead, …)
+  const om = outputMult(state);
+  const totalRate = (id: ResourceId): number => (rates.resources[id] ?? 0) + (homeRates[id] ?? 0) * om;
+  const goldCap = effectiveCap(state, 'gold');
+  const goldAtCap = r.gold >= goldCap - 1e-9;
+  const insightCap = effectiveCap(state, 'insight');
+  const insightAtCap = r.insight >= insightCap - 1e-9;
   const fs = foundingStatus(state);
   const founded = fs.founded;
   return {
     resources: {
-      gold: { amount: r.gold, rate: rates.resources.gold ?? 0, rateTip: resourceRateTip(state, 'gold', false) },
+      gold: {
+        amount: r.gold,
+        rate: goldAtCap ? 0 : totalRate('gold'),
+        cap: goldCap,
+        atCap: goldAtCap,
+        rateTip: resourceRateTip(state, 'gold', goldAtCap),
+      },
       insight: {
         amount: r.insight,
-        rate: rates.resources.insight ?? 0,
-        cap: state.run.caps.insight,
+        rate: insightAtCap ? 0 : totalRate('insight'),
+        cap: insightCap,
         atCap: insightAtCap,
         rateTip: resourceRateTip(state, 'insight', insightAtCap),
       },
@@ -384,13 +518,15 @@ export function toView(state: GameState): UiState {
     },
     materials: { moonpetal: r.moonpetal, ironOre: r.ironOre, spiritDust: r.spiritDust },
     vitals: {
-      life: { cur: state.run.vitals.life.cur, max: state.run.vitals.life.max, regen: state.run.vitals.life.regen },
+      // regen is the EFFECTIVE rate the tick applies (base + equipped-item `rate` mods),
+      // so Herbalist Kit / Charm of Vigor / Mana Crystal visibly move the "recovers X/s".
+      life: { cur: state.run.vitals.life.cur, max: state.run.vitals.life.max, regen: effectiveRegen(state, 'life') },
       stamina: {
         cur: state.run.vitals.stamina.cur,
         max: state.run.vitals.stamina.max,
-        regen: state.run.vitals.stamina.regen,
+        regen: effectiveRegen(state, 'stamina'),
       },
-      mana: { cur: state.run.vitals.mana.cur, max: state.run.vitals.mana.max, regen: state.run.vitals.mana.regen },
+      mana: { cur: state.run.vitals.mana.cur, max: state.run.vitals.mana.max, regen: effectiveRegen(state, 'mana') },
     },
     essence: ELEMENTS.map((id) => {
       const e = state.run.essence[id];
@@ -417,6 +553,7 @@ export function toView(state: GameState): UiState {
     tasks: TASKS.map((def, i) => buildTaskView(state, def, infos[i])),
     cantrips: listCantripInfo(state).map((info) => buildCantripView(info)),
     slots: { used: slotsUsed(state), total: activitySlots(state) },
+    home: buildHomeView(state),
     founding: {
       phase: state.run.phase,
       founded,
@@ -431,10 +568,16 @@ export function toView(state: GameState): UiState {
       ],
     },
     chronicle: state.run.chronicle
-      .slice(-12)
+      .slice(-chronicleLines(state))
       .reverse()
       .map((c) => ({ t: mmss(c.at), text: c.text, kind: c.kind })),
   };
+}
+
+/** How many Chronicle lines to show — the setting, clamped to a sane 5..10. */
+function chronicleLines(state: GameState): number {
+  const n = state.settings?.chronicleLines ?? 8;
+  return Math.max(5, Math.min(10, Math.round(n)));
 }
 
 // ---- live state + stores ----
@@ -485,6 +628,38 @@ export function setNotationSetting(n: Notation): void {
   state.settings.notation = n;
   setNotation(n);
   persist();
+  publish();
+}
+
+/** Change how many Chronicle lines are shown (clamped 5..10): persist + re-render. */
+export function setChronicleLinesSetting(n: number): void {
+  state.settings.chronicleLines = Math.max(5, Math.min(10, Math.round(n)));
+  persist();
+  publish();
+}
+
+/** Change the UI font key: persist + re-render (the panel applies the family). */
+export function setFontSetting(f: string): void {
+  state.settings.font = f;
+  persist();
+  publish();
+}
+
+// ---- Home actions (housing tier + items) — call the engine, then publish ----
+export function moveHome(tierId: string): void {
+  engineMoveHome(state, tierId);
+  publish();
+}
+export function buyItem(itemId: string): void {
+  engineBuyItem(state, itemId);
+  publish();
+}
+export function equipItem(itemId: string): void {
+  engineEquipItem(state, itemId);
+  publish();
+}
+export function unequipItem(itemId: string): void {
+  engineUnequipItem(state, itemId);
   publish();
 }
 

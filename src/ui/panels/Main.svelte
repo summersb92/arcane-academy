@@ -14,9 +14,10 @@
     }
   }
 
-  // Home-panel tasks (fixtures + the Founding) render on the Home tab, not here.
+  // Home-panel tasks (the Founding) render on the Home tab, not here.
   $: active = $game.tasks.filter((t) => t.active && t.panel !== 'home');
-  $: available = $game.tasks.filter((t) => !t.active && t.panel !== 'home');
+  // Hide far-locked cards (revealed=false); keep active + revealed-but-locked (dimmed).
+  $: available = $game.tasks.filter((t) => !t.active && t.panel !== 'home' && t.revealed);
 </script>
 
 <main>
@@ -102,16 +103,6 @@
           </div>
         {/each}
       </div>
-
-      <h2 class="mt">Chronicle</h2>
-      <ul class="chron">
-        {#each $game.chronicle as c}
-          <li>
-            <span class="t">{c.t}</span>
-            <span class:ev={c.kind === 'ev'} class:found={c.kind === 'found'}>{c.text}</span>
-          </li>
-        {/each}
-      </ul>
     </section>
   {:else if $activeTab === 'skills'}
     <Skills />

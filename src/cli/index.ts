@@ -30,9 +30,9 @@ import {
 import { learnCantrip, listCantripInfo, type CantripInfo } from '../engine/systems/skills';
 import { essenceRates } from '../engine/systems/essence';
 import { foundingStatus, foundingSummaryLine } from '../engine/systems/founding';
-import { fixtureLevel } from '../engine/systems/home';
+import { homeSlots } from '../engine/systems/home';
 import { TASK_BY_ID, type TaskDef, type TaskType } from '../content/tasks';
-import { FIXTURES } from '../content/home';
+import { HOME_TIER_BY_ID } from '../content/home';
 import { runScenario, type Scenario } from './scenario';
 import { autoplay, autoplayFailLine, type AutoplayOptions } from './autoplay';
 
@@ -99,12 +99,17 @@ function renderActiveTasks(state: GameState): string {
   return `active tasks:\n${lines.join('\n')}`;
 }
 
-/** Home fixture levels + the Founding gate snapshot (once Phase 3 / the lair opens). */
+/** Home tier + equipped items + the Founding gate snapshot (once the lair opens). */
 function renderHomeAndFounding(state: GameState): string[] {
   if (state.run.flags.lairFounded !== true) return [];
   const lines: string[] = [];
-  const built = FIXTURES.map((f) => ({ f, lvl: fixtureLevel(state, f.id) })).filter((x) => x.lvl > 0);
-  if (built.length) lines.push(`home: ${built.map((x) => `${x.f.id} L${x.lvl}`).join(' ')}`);
+  const home = state.run.home ?? { tier: 'vagrant', owned: [], equipped: [] };
+  const tierName = HOME_TIER_BY_ID[home.tier]?.name ?? home.tier;
+  lines.push(
+    `home: ${tierName} · items ${home.equipped.length}/${homeSlots(state)}${
+      home.equipped.length ? ` (${home.equipped.join(', ')})` : ''
+    }`,
+  );
   const fs = foundingStatus(state);
   const tag = fs.founded ? ' FOUNDED' : fs.allMet ? ' (gate OPEN)' : '';
   lines.push(`founding: ${foundingSummaryLine(state)}${tag}`);

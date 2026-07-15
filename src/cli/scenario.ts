@@ -6,6 +6,7 @@ import { newGame, type GameState } from '../engine/state';
 import { simulate } from '../engine/tick';
 import { doTask, startTask, stopTask } from '../engine/systems/tasks';
 import { learnCantrip } from '../engine/systems/skills';
+import { moveHome, buyItem, equipItem, unequipItem } from '../engine/systems/home';
 
 export type Op = '>=' | '<=' | '>' | '<' | '==' | '!=';
 
@@ -24,6 +25,10 @@ export type Step =
   | { start: string; expect?: Expect }
   | { stop: string; expect?: Expect }
   | { learn: string; expect?: Expect }
+  | { moveHome: string; expect?: Expect } // v0.1.1 — housing tier + item actions
+  | { buyItem: string; expect?: Expect }
+  | { equipItem: string; expect?: Expect }
+  | { unequipItem: string; expect?: Expect }
   | { assert: { path: string; op: Op; value: number | boolean | string } }
   | { note: string };
 
@@ -115,6 +120,14 @@ export function runScenario(spec: Scenario): ScenarioResult {
       results.push(actionResult('stop', step.stop, step.expect, stopTask(state, step.stop)));
     } else if ('learn' in step) {
       results.push(actionResult('learn', step.learn, step.expect, learnCantrip(state, step.learn)));
+    } else if ('moveHome' in step) {
+      results.push(actionResult('moveHome', step.moveHome, step.expect, moveHome(state, step.moveHome)));
+    } else if ('buyItem' in step) {
+      results.push(actionResult('buyItem', step.buyItem, step.expect, buyItem(state, step.buyItem)));
+    } else if ('equipItem' in step) {
+      results.push(actionResult('equipItem', step.equipItem, step.expect, equipItem(state, step.equipItem)));
+    } else if ('unequipItem' in step) {
+      results.push(actionResult('unequipItem', step.unequipItem, step.expect, unequipItem(state, step.unequipItem)));
     } else if ('assert' in step) {
       const { path, op, value } = step.assert;
       const raw = resolvePath(state, path);

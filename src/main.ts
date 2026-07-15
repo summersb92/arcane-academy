@@ -2,6 +2,7 @@
 import './app.css';
 import App from './ui/App.svelte';
 import { applyTheme, loadTheme } from './ui/theme';
+import { applyFont } from './ui/font';
 import { getState, setState, startLoop, publish, resumeTimebase, offlineSummary } from './ui/stores';
 import { newGame } from './engine/state';
 import { applyOffline } from './engine/offline';
@@ -33,6 +34,10 @@ if (loaded.ok && loaded.state) {
   }
   setState(newGame());
 }
+
+// Reflect the loaded save's UI font onto <html data-font> (theme is applied above;
+// font lives in the save so it is applied AFTER the save is loaded into state).
+applyFont(getState().settings.font);
 
 // ---- offline catch-up ----
 function catchUp(where: string): void {
