@@ -15,3 +15,6 @@ dist/
 npm-debug.log*
 # local CLI save files
 *.aasave
+
+# local tooling/session config
+.claude/
