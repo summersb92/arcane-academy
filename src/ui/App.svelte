@@ -4,6 +4,8 @@
   import Resources from './panels/Resources.svelte';
   import Character from './panels/Character.svelte';
   import Main from './panels/Main.svelte';
+  import System from './panels/System.svelte';
+  import OfflinePanel from './components/OfflinePanel.svelte';
 </script>
 
 <div class="wrap">
@@ -15,7 +17,11 @@
     <Character />
   </div>
   <div class="foot">
-    <span>Left = resources · top = tabs · right = your character. Theme picker in the header.</span>
+    <span>Left = resources · top = tabs · right = your character. Theme &amp; System in the header.</span>
     <span>Arcanum-style solo mage · idle-first · no server</span>
   </div>
 </div>
+
+<!-- Overlays: shown on load after an idle gap / opened from the header. -->
+<OfflinePanel />
+<System />

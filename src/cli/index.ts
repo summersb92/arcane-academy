@@ -34,6 +34,7 @@ import { fixtureLevel } from '../engine/systems/home';
 import { TASK_BY_ID, type TaskDef, type TaskType } from '../content/tasks';
 import { FIXTURES } from '../content/home';
 import { runScenario, type Scenario } from './scenario';
+import { autoplay, autoplayFailLine, type AutoplayOptions } from './autoplay';
 
 // A hard ceiling on `sim` so an absurd arg (e.g. `sim 1e9`) returns promptly instead of
 // hanging: ~10M ticks ≈ a couple seconds of compute. Normal sims (≤ a few hours =
@@ -325,6 +326,7 @@ function printHelp(): void {
       '  save <path> [--seed N]         write a .aasave file (same format the browser downloads)',
       '  load <path> [--json]           read a .aasave file (browser saves load here too)',
       '  run <scenario.json>            run a scenario; exit 0/1 on its assertions',
+      '  autoplay [--goal founding] [--max-min N] [--seed N] [--json]   heuristic bot plays to the goal',
       '  repl [--seed N]                interactive loop',
       '',
       '  e.g.  load run.aasave sim 3600 save run.aasave   (load → fast-forward 1h → persist)',
@@ -511,6 +513,69 @@ function cmdRun(args: Args): number {
   return result.ok ? 0 : 1;
 }
 
+/** mm:ss for the autoplay timeline. */
+function mmss(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/**
+ * autoplay [--goal founding] [--max-min N] [--seed N] [--step N] [--json]
+ * A heuristic bot plays toward the goal and reports whether/when it reached it.
+ */
+function cmdAutoplay(argv: string[]): number {
+  let goal: AutoplayOptions['goal'] = 'founding';
+  let maxMin = 60;
+  let seed: number | undefined;
+  let step = 1;
+  let json = false;
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--goal') goal = argv[++i] as AutoplayOptions['goal'];
+    else if (a === '--max-min') maxMin = Number(argv[++i]);
+    else if (a === '--seed') seed = Number(argv[++i]);
+    else if (a === '--step') step = Number(argv[++i]);
+    else if (a === '--json') json = true;
+  }
+  if (goal !== 'founding') {
+    console.error(`autoplay: unknown goal "${goal}" (only 'founding' in v0.1)`);
+    return 1;
+  }
+  if (!Number.isFinite(maxMin) || maxMin <= 0) {
+    console.error('usage: autoplay [--goal founding] [--max-min N] [--seed N] [--step N] [--json]');
+    return 1;
+  }
+
+  const res = autoplay({ goal, maxMin, seed, stepSeconds: step });
+
+  if (json) {
+    console.log(
+      JSON.stringify(
+        {
+          reached: res.reached,
+          atSec: res.atSec,
+          atMin: res.atSec !== undefined ? +(res.atSec / 60).toFixed(2) : undefined,
+          simSeconds: +res.simSeconds.toFixed(1),
+          seed: res.finalState.seed,
+          timeline: res.timeline,
+        },
+        null,
+        2,
+      ),
+    );
+    return res.reached ? 0 : 1;
+  }
+
+  console.log(`# autoplay --goal ${goal} --seed ${res.finalState.seed} (decision step ${step}s, cap ${maxMin} min)`);
+  for (const e of res.timeline) console.log(`  [${mmss(e.atSec)}] ${e.text}`);
+  if (res.reached && res.atSec !== undefined) {
+    console.log(`\nFOUNDED at ${mmss(res.atSec)} (${(res.atSec / 60).toFixed(1)} min sim, ${res.atSec.toFixed(0)}s).`);
+  } else {
+    console.log(`\nDID NOT reach the Founding — ${autoplayFailLine(res)}.`);
+  }
+  return res.reached ? 0 : 1;
+}
+
 function cmdRepl(args: Args): number {
   const state = freshState(args.seed);
   const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: 'aa> ' });
@@ -588,6 +653,7 @@ function main(): number {
   // state-threading pipeline, so they're dispatched here directly.
   if (cmd0 === 'run') return cmdRun(parseArgs(argv));
   if (cmd0 === 'repl') return cmdRepl(parseArgs(argv));
+  if (cmd0 === 'autoplay') return cmdAutoplay(argv);
 
   const { commands, json, seed } = parsePipeline(argv);
   return runPipeline(commands, json, seed);

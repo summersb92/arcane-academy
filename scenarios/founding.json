@@ -1,0 +1,66 @@
+{
+  "name": "founding",
+  "seed": 7,
+  "steps": [
+    { "note": "Origin — a penniless stable-hand. Labour a little for early coin." },
+    { "do": "clean-stables" },
+    { "do": "clean-stables" },
+    { "do": "clean-stables" },
+    { "do": "clean-stables" },
+    { "do": "clean-stables" },
+    { "do": "clean-stables" },
+    { "do": "clean-stables" },
+    { "do": "clean-stables" },
+    { "assert": { "path": "run.resources.gold", "op": ">=", "value": 20 } },
+
+    { "note": "Idle to the spark (timer ~45s) — a purely idle player still awakens." },
+    { "sim": 50 },
+    { "assert": { "path": "run.flags.awakened", "op": "==", "value": true } },
+    { "assert": { "path": "run.phase", "op": "==", "value": "awakened" } },
+
+    { "note": "Awakening: Study un-gates. Trickle Insight to afford the first cantrips." },
+    { "start": "study" },
+    { "assert": { "path": "run.tasks.study.active", "op": "==", "value": true } },
+    { "sim": 60 },
+    { "assert": { "path": "run.resources.insight", "op": ">=", "value": 25 } },
+
+    { "note": "Read the Page opens the web AND (first cantrip) claims the lair — Home opens. A tick lets progression register the lair beat." },
+    { "learn": "read-the-page" },
+    { "sim": 1 },
+    { "assert": { "path": "run.flags.lairFounded", "op": "==", "value": true } },
+    { "assert": { "path": "run.phase", "op": "==", "value": "lair" } },
+
+    { "note": "Spark awakens Fire ▲ — the prerequisite for taking contracts." },
+    { "learn": "spark" },
+    { "assert": { "path": "run.essence.fire.awakened", "op": "==", "value": true } },
+
+    { "note": "Free the Study slot and take Ward a Barn (Running, repeatable): our Renown source and best early Gold. Fire drain 0.15/s < Spark's 0.2/s trickle, so it self-sustains." },
+    { "stop": "study" },
+    { "start": "ward-a-barn" },
+    { "assert": { "path": "run.tasks.ward-a-barn.active", "op": "==", "value": true } },
+
+    { "note": "Work the contract repeatedly (~30 cycles): Gold + Renown accrue for the Founding." },
+    { "sim": 360 },
+    { "assert": { "path": "run.resources.renown", "op": ">=", "value": 25 } },
+    { "assert": { "path": "run.resources.gold", "op": ">=", "value": 200 } },
+
+    { "note": "Secure a Guild Charter (needs a name — Renown ≥ 8 — and 60 Gold)." },
+    { "start": "secure-charter" },
+    { "sim": 6 },
+    { "assert": { "path": "run.flags.hasCharter", "op": "==", "value": true } },
+
+    { "note": "Claim the Ruined Tower — the Site (the big 120-Gold sink)." },
+    { "start": "claim-site" },
+    { "sim": 8 },
+    { "assert": { "path": "run.flags.hasSite", "op": "==", "value": true } },
+
+    { "note": "Gate is open: Gold ≥ 100 held, Renown ≥ 25, Charter ✓, Site ✓ — Found the Academy." },
+    { "assert": { "path": "run.resources.gold", "op": ">=", "value": 100 } },
+    { "start": "found-academy" },
+    { "sim": 10 },
+
+    { "note": "The finale: flag founded flips, phase → 'founded', the Academy tab un-greys." },
+    { "assert": { "path": "run.flags.founded", "op": "==", "value": true } },
+    { "assert": { "path": "run.phase", "op": "==", "value": "founded" } }
+  ]
+}

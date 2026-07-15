@@ -24,6 +24,8 @@ import { learnCantrip as engineLearnCantrip, listCantripInfo, outputMult } from 
 import { essenceRates } from '../engine/systems/essence';
 import { canFound, foundingStatus } from '../engine/systems/founding';
 import type { OfflineSummary } from '../engine/offline';
+import { serialize, LOCALSTORAGE_KEY } from '../engine/save';
+import type { Notation } from '../engine/format';
 import { setNotation } from './format';
 
 // ---- UiState: the stable view contract the panels read ----
@@ -449,8 +451,41 @@ export const activeTab = writable<string>('main');
  */
 export const offlineSummary = writable<OfflineSummary | null>(null);
 
+/** Whether the header's System/Settings panel (save transports + notation) is open. */
+export const systemOpen = writable<boolean>(false);
+
 export function getState(): GameState {
   return state;
+}
+
+/**
+ * Persist the current state to localStorage NOW, in the one portable format. Used
+ * after an explicit user action (import a save, change a setting) so a reload keeps
+ * it without waiting for the ~30s autosave. Deliberately writes even if the on-load
+ * autosave was blocked by a corrupt file — an explicit import/settings change is the
+ * user choosing to replace it.
+ */
+export function persist(): void {
+  try {
+    state.lastSaved = Date.now();
+    localStorage.setItem(LOCALSTORAGE_KEY, serialize(state));
+  } catch {
+    /* quota / unavailable — ignore, autosave will retry */
+  }
+}
+
+/** Apply an imported GameState (from a file/string) and persist it immediately. */
+export function importState(next: GameState): void {
+  setState(next);
+  persist();
+}
+
+/** Change the number-notation setting: persist it into the save + re-render. */
+export function setNotationSetting(n: Notation): void {
+  state.settings.notation = n;
+  setNotation(n);
+  persist();
+  publish();
 }
 
 export function setState(next: GameState): void {

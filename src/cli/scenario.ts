@@ -21,7 +21,7 @@ export type Step =
   | { start: string }
   | { stop: string }
   | { learn: string }
-  | { assert: { path: string; op: Op; value: number | boolean } }
+  | { assert: { path: string; op: Op; value: number | boolean | string } }
   | { note: string };
 
 export interface StepResult {
@@ -47,12 +47,18 @@ export function resolvePath(obj: unknown, path: string): unknown {
   }, obj);
 }
 
-function compare(actual: unknown, op: Op, expected: number | boolean): boolean {
+function compare(actual: unknown, op: Op, expected: number | boolean | string): boolean {
   if (typeof expected === 'boolean') {
     const a = Boolean(actual);
     if (op === '==') return a === expected;
     if (op === '!=') return a !== expected;
     return false; // ordering ops are meaningless for booleans
+  }
+  if (typeof expected === 'string') {
+    // String state (e.g. run.phase === 'founded') — equality only.
+    if (op === '==') return actual === expected;
+    if (op === '!=') return actual !== expected;
+    return false; // ordering ops are meaningless for strings
   }
   const a = typeof actual === 'number' ? actual : NaN;
   switch (op) {
