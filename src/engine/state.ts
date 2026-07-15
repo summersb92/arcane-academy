@@ -47,7 +47,6 @@ export interface RunState {
   tasks: Record<string, TaskRuntime>; // T-004
   activitySlots: number; // continuous-task capacity (starts 2; "Widen the Study" raises to 3) — T-004
   skills: string[]; // learned cantrip ids (T-005)
-  home: Record<string, number>; // fixture levels (T-006)
   flags: Record<string, boolean>;
   chronicle: ChronicleEntry[];
 }
@@ -103,7 +102,6 @@ export function newGame(seed: number = seedFrom(Date.now())): GameState {
       tasks: {},
       activitySlots: STARTING.activitySlots,
       skills: [],
-      home: {},
       flags: {},
       chronicle: [{ at: 0, text: 'You awaken, penniless, in the stable straw.' }],
     },

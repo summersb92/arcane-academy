@@ -160,6 +160,30 @@ describe('save robustness: normalize + validate', () => {
     s.run.vitals.life.cur = -1;
     expect(safeLoad(serialize(s)).ok).toBe(false);
   });
+
+  it('a save LACKING settings loads via safeLoad and toView()s without throwing (settings defaulted)', () => {
+    // setState()/System.svelte read state.settings.notation on boot, OUTSIDE safeLoad's
+    // guard — the migrate v0 target and hand-edited saves can omit it. normalize() must
+    // backfill it so import/boot can't throw a TypeError (DoD #3 fail-safe).
+    const s = newGame(40) as unknown as Record<string, unknown>;
+    delete s.settings;
+    const res = safeLoad(serialize(s as never));
+    expect(res.ok).toBe(true);
+    expect(res.state!.settings).toEqual({ notation: 'suffix', theme: 'system' });
+    expect(() => toView(res.state!)).not.toThrow();
+  });
+
+  it('tolerates a resource that SETTLED just below 0 (float epsilon) but still rejects a real negative', () => {
+    // canAfford tolerates EPS=1e-9; validate() matches it, so a resource resting at ~-1e-9
+    // (float settling) is NOT falsely rejected on reload…
+    const ok = newGame(41);
+    ok.run.resources.gold = -5e-10;
+    expect(safeLoad(serialize(ok)).ok).toBe(true);
+    // …while a materially negative amount is still corruption and rejected.
+    const bad = newGame(42);
+    bad.run.resources.gold = -100;
+    expect(safeLoad(serialize(bad)).ok).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

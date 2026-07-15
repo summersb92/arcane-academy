@@ -74,14 +74,22 @@
    *  the current save is untouched and a clear message is shown. */
   function applyText(text: string, source: string): void {
     const res = safeLoad(text);
-    if (res.ok && res.state) {
-      importState(res.state);
-      const migrated = res.migratedFrom !== undefined ? ` (migrated from v${res.migratedFrom})` : '';
-      setMsg('ok', `Loaded ${source}${migrated}. Your game is updated.`);
-      importText = '';
-    } else {
+    if (!res.ok || !res.state) {
       setMsg('err', `Import failed: ${res.error} Your current save was kept.`);
+      return;
     }
+    // safeLoad guards parse/normalize/validate, but APPLYING the state (setState →
+    // setNotation/toView) runs OUTSIDE that guard; wrap it so any unexpected throw
+    // surfaces as the same corruption-safe message instead of an uncaught error.
+    try {
+      importState(res.state);
+    } catch (e) {
+      setMsg('err', `Import failed: ${e instanceof Error ? e.message : String(e)} Your current save was kept.`);
+      return;
+    }
+    const migrated = res.migratedFrom !== undefined ? ` (migrated from v${res.migratedFrom})` : '';
+    setMsg('ok', `Loaded ${source}${migrated}. Your game is updated.`);
+    importText = '';
   }
 
   function importFromString(): void {

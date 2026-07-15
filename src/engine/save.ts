@@ -132,6 +132,11 @@ function peekVersion(text: string): number | undefined {
 const RESOURCE_IDS: ResourceId[] = ['gold', 'insight', 'renown', 'moonpetal', 'ironOre', 'spiritDust'];
 const VITAL_IDS = ['life', 'stamina', 'mana'] as const;
 
+// Match the sim's affordability tolerance (systems/tasks.ts canAfford) so a resource or
+// vital that legitimately SETTLED within a float epsilon of its clamp boundary in play
+// isn't falsely rejected as corruption on reload.
+const EPS = 1e-9;
+
 /**
  * Fill defaults for every `run.*` field a read model touches, so `toView()` (which
  * runs on the initial setState/publish, BEFORE the first tick's self-heal) never
@@ -141,13 +146,22 @@ const VITAL_IDS = ['life', 'stamina', 'mana'] as const;
  * and tests.
  */
 export function normalize(state: GameState): void {
-  const run = state?.run;
+  if (!state || typeof state !== 'object') return; // nothing to backfill (validate rejects)
+
+  // settings — setState()/System.svelte read state.settings.notation on boot, BEFORE the
+  // first run-based render AND outside safeLoad's guard, so a save that parses+validates
+  // but lacks settings (the migrate v0 target, or a foreign/hand-edited .aasave) would
+  // otherwise throw a TypeError on import/boot. Default it alongside the run.* backfills.
+  state.settings ??= { notation: 'suffix', theme: 'system' };
+  state.settings.notation ??= 'suffix';
+  state.settings.theme ??= 'system';
+
+  const run = state.run;
   if (!run || typeof run !== 'object') return; // validate() will reject a missing run
 
   // containers the read models iterate/spread — undefined here would throw on render
   run.tasks ??= {};
   run.flags ??= {};
-  run.home ??= {};
   run.skills ??= [];
   run.chronicle ??= [];
   if (run.phase === undefined) run.phase = 'origin';
@@ -187,9 +201,10 @@ function validate(state: GameState): void {
     if (typeof val !== 'number' || !Number.isFinite(val)) {
       throw new Error(`Resource "${k}" is not a finite number.`);
     }
-    // Resources are gated by canAfford and never clamp below 0 in play, so a negative
-    // amount is corruption. Reject (fail-safe) rather than silently loading a broken run.
-    if (val < 0) throw new Error(`Resource "${k}" is negative (${val}).`);
+    // Resources are gated by canAfford and never clamp below 0 in play, so a materially
+    // negative amount is corruption — reject (fail-safe) rather than silently loading a
+    // broken run. Tolerate a sub-EPS undershoot (float settling), matching canAfford's EPS.
+    if (val < -EPS) throw new Error(`Resource "${k}" is negative (${val}).`);
   }
 
   if (!run.vitals?.life || !run.vitals?.stamina || !run.vitals?.mana) {
@@ -202,9 +217,10 @@ function validate(state: GameState): void {
         throw new Error(`Vital "${key}.${field}" is not a finite number.`);
       }
     }
-    // `cur` is always clamped to [0, max] in play (addPool + regen), so an out-of-range
-    // value is corruption. Reject it — consistent with the negative-resource fail-safe.
-    if (v.cur < 0 || v.cur > v.max) {
+    // `cur` is always clamped to [0, max] in play (addPool + regen), so a materially out-of-
+    // range value is corruption. Reject it — consistent with the negative-resource fail-safe,
+    // including the same EPS tolerance for a value that settled on a boundary.
+    if (v.cur < -EPS || v.cur > v.max + EPS) {
       throw new Error(`Vital "${key}" cur ${v.cur} out of range [0, ${v.max}].`);
     }
   }

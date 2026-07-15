@@ -9,6 +9,9 @@ import { learnCantrip } from '../engine/systems/skills';
 
 export type Op = '>=' | '<=' | '>' | '<' | '==' | '!=';
 
+/** Optional outcome assertion for an action step (do/start/stop/learn). */
+export type Expect = 'ok' | 'refused';
+
 export interface Scenario {
   name?: string;
   seed?: number;
@@ -17,10 +20,10 @@ export interface Scenario {
 
 export type Step =
   | { sim: number }
-  | { do: string }
-  | { start: string }
-  | { stop: string }
-  | { learn: string }
+  | { do: string; expect?: Expect }
+  | { start: string; expect?: Expect }
+  | { stop: string; expect?: Expect }
+  | { learn: string; expect?: Expect }
   | { assert: { path: string; op: Op; value: number | boolean | string } }
   | { note: string };
 
@@ -83,6 +86,19 @@ function fmtActual(raw: unknown): string {
   return typeof raw === 'number' ? raw.toFixed(4) : String(raw);
 }
 
+/**
+ * Build the StepResult for an action step. Without `expect` the action is fire-and-
+ * forget and always PASSes (pre-expect behavior — committed scenarios are unchanged);
+ * with `expect`, the step PASSes iff the engine's actual outcome matches, so a scenario
+ * can assert a refusal (e.g. can't afford / gated) and fail the run on a mismatch.
+ */
+function actionResult(verb: string, id: string, expect: Expect | undefined, actualOk: boolean): StepResult {
+  const outcome: Expect = actualOk ? 'ok' : 'refused';
+  if (expect === undefined) return { ok: true, desc: `${verb} ${id}`, detail: outcome };
+  const ok = expect === outcome;
+  return { ok, desc: `${verb} ${id}`, detail: ok ? `${outcome} (expected)` : `expected ${expect}, got ${outcome}` };
+}
+
 export function runScenario(spec: Scenario): ScenarioResult {
   const state = newGame(spec.seed ?? 1);
   const results: StepResult[] = [];
@@ -92,17 +108,13 @@ export function runScenario(spec: Scenario): ScenarioResult {
       simulate(state, step.sim);
       results.push({ ok: true, desc: `sim ${step.sim}s`, detail: `playtime=${state.playtime.toFixed(1)}s` });
     } else if ('do' in step) {
-      const ok = doTask(state, step.do);
-      results.push({ ok: true, desc: `do ${step.do}`, detail: ok ? 'ok' : 'refused' });
+      results.push(actionResult('do', step.do, step.expect, doTask(state, step.do)));
     } else if ('start' in step) {
-      const ok = startTask(state, step.start);
-      results.push({ ok: true, desc: `start ${step.start}`, detail: ok ? 'ok' : 'refused' });
+      results.push(actionResult('start', step.start, step.expect, startTask(state, step.start)));
     } else if ('stop' in step) {
-      const ok = stopTask(state, step.stop);
-      results.push({ ok: true, desc: `stop ${step.stop}`, detail: ok ? 'ok' : 'refused' });
+      results.push(actionResult('stop', step.stop, step.expect, stopTask(state, step.stop)));
     } else if ('learn' in step) {
-      const ok = learnCantrip(state, step.learn);
-      results.push({ ok: true, desc: `learn ${step.learn}`, detail: ok ? 'ok' : 'refused' });
+      results.push(actionResult('learn', step.learn, step.expect, learnCantrip(state, step.learn)));
     } else if ('assert' in step) {
       const { path, op, value } = step.assert;
       const raw = resolvePath(state, path);
