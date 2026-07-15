@@ -187,6 +187,9 @@ function validate(state: GameState): void {
     if (typeof val !== 'number' || !Number.isFinite(val)) {
       throw new Error(`Resource "${k}" is not a finite number.`);
     }
+    // Resources are gated by canAfford and never clamp below 0 in play, so a negative
+    // amount is corruption. Reject (fail-safe) rather than silently loading a broken run.
+    if (val < 0) throw new Error(`Resource "${k}" is negative (${val}).`);
   }
 
   if (!run.vitals?.life || !run.vitals?.stamina || !run.vitals?.mana) {
@@ -198,6 +201,11 @@ function validate(state: GameState): void {
       if (typeof v[field] !== 'number' || !Number.isFinite(v[field])) {
         throw new Error(`Vital "${key}.${field}" is not a finite number.`);
       }
+    }
+    // `cur` is always clamped to [0, max] in play (addPool + regen), so an out-of-range
+    // value is corruption. Reject it — consistent with the negative-resource fail-safe.
+    if (v.cur < 0 || v.cur > v.max) {
+      throw new Error(`Vital "${key}" cur ${v.cur} out of range [0, ${v.max}].`);
     }
   }
 

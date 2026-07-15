@@ -138,6 +138,28 @@ describe('save robustness: normalize + validate', () => {
     s.run.caps.insight = Infinity; // serializes to null → validate rejects
     expect(safeLoad(serialize(s as never)).ok).toBe(false);
   });
+
+  it('rejects a save with a NEGATIVE resource amount (fail-safe: caller keeps its save)', () => {
+    const s = newGame(20);
+    s.run.resources.gold = -100; // resources never clamp below 0 in play → corruption
+    const res = safeLoad(serialize(s));
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/gold|negative/i);
+  });
+
+  it('rejects a save whose vital cur exceeds its max', () => {
+    const s = newGame(21);
+    s.run.vitals.stamina.cur = s.run.vitals.stamina.max + 5; // cur is always clamped to [0,max]
+    const res = safeLoad(serialize(s));
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/stamina|range/i);
+  });
+
+  it('rejects a save with a negative vital cur', () => {
+    const s = newGame(22);
+    s.run.vitals.life.cur = -1;
+    expect(safeLoad(serialize(s)).ok).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -228,5 +250,26 @@ describe('rng write-back plumbing', () => {
     const nextB = drawRng(b, (r) => r.next());
     expect(nextB).toBe(nextA);
     expect(b.rngState).toBe(a.rngState);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Playtest fix — simulate() step ceiling so an absurd `sim` arg can't hang
+// ---------------------------------------------------------------------------
+describe('simulate() step ceiling (sim hang guard)', () => {
+  it('truncates an unbounded duration at maxSteps instead of running to completion', () => {
+    const s = newGame(30);
+    s.run.flags.awakened = true;
+    startTask(s, 'study');
+    simulate(s, 1e9, 100); // 1e9s = 1e10 ticks; the ceiling stops it at 100 ticks (=10s)
+    expect(s.playtime).toBeCloseTo(100 * TICK, 6);
+  });
+
+  it('maxSteps defaults to Infinity — a normal sim is unaffected', () => {
+    const s = newGame(30);
+    s.run.flags.awakened = true;
+    startTask(s, 'study');
+    simulate(s, 10); // no ceiling passed → full run
+    expect(s.playtime).toBeCloseTo(10, 6);
   });
 });

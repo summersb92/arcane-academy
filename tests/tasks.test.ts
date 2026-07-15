@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { newGame } from '../src/engine/state';
 import { simulate, step } from '../src/engine/tick';
+import { applyOffline } from '../src/engine/offline';
 import {
   doTask,
   startTask,
@@ -8,6 +9,8 @@ import {
   toggleRepeat,
   slotsUsed,
   activitySlots,
+  taskRates,
+  listTaskInfo,
 } from '../src/engine/systems/tasks';
 
 describe('instant tasks', () => {
@@ -136,5 +139,63 @@ describe('running tasks', () => {
     expect(s.run.tasks['smith'].repeat).toBe(true);
     expect(toggleRepeat(s, 'smith')).toBe(false);
     expect(s.run.tasks['smith'].repeat).toBe(false);
+  });
+});
+
+describe('timed completion epsilon (playtest fix)', () => {
+  it('a length:8 Limited task completes at EXACTLY its duration — no one-tick-late strand', () => {
+    const s = newGame(1);
+    s.run.flags.awakened = true; // Grand Library requires the spark
+    s.run.resources.gold = 100;
+    expect(startTask(s, 'grand-library')).toBe(true); // length 8; raiseInsightCap 150
+    expect(slotsUsed(s)).toBe(1);
+
+    // Pre-fix, progress lands at 0.9999999999999984 at t=8 and the task never completes,
+    // stranding its slot + spent Gold until an extra tick. It must complete AT 8s.
+    simulate(s, 8);
+
+    expect(s.run.tasks['grand-library'].count).toBe(1);
+    expect(s.run.tasks['grand-library'].active).toBe(false); // slot freed on completion
+    expect(slotsUsed(s)).toBe(0);
+    expect(s.run.caps.insight).toBe(250); // 100 → 250 effect applied
+  });
+
+  it('the exact-duration completion is identical via offline catch-up (advanceFixed path)', () => {
+    const s = newGame(1);
+    s.run.flags.awakened = true;
+    s.run.resources.gold = 100;
+    startTask(s, 'grand-library');
+    s.lastSaved = Date.now() - 8000; // exactly 8s away
+    applyOffline(s, Date.now());
+    expect(s.run.tasks['grand-library'].count).toBe(1);
+    expect(s.run.caps.insight).toBe(250);
+  });
+
+  it('a perpetual + running mix still behaves across the fix', () => {
+    const s = newGame(1);
+    s.run.flags.awakened = true;
+    s.run.caps.insight = 1e9; // keep Study output observable
+    startTask(s, 'study'); // perpetual (Insight +0.55/s)
+    startTask(s, 'smith'); // running, length 15, repeatable
+    simulate(s, 46); // 3 Smith cycles (15/30/45), Study trickles the whole time
+    expect(s.run.tasks['smith'].count).toBe(3);
+    expect(s.run.tasks['smith'].active).toBe(true); // repeat keeps it running
+    expect(s.run.resources.insight).toBeCloseTo(0.55 * 46, 4);
+  });
+});
+
+describe('limited start-cost rate (display fix)', () => {
+  it('a building Limited task shows no phantom per-second start-cost drain', () => {
+    const s = newGame(1);
+    s.run.flags.awakened = true;
+    s.run.resources.gold = 100;
+    expect(startTask(s, 'grand-library')).toBe(true); // pays Gold 60 ONCE at start
+    expect(s.run.resources.gold).toBeCloseTo(40, 6);
+
+    // The one-time start-cost must NOT amortize as a per-second drain while it builds:
+    // Gold stays flat (the 60 was already paid), unlike a repeating Running cycle.
+    expect(taskRates(s).resources.gold ?? 0).toBe(0);
+    const gl = listTaskInfo(s).find((i) => i.id === 'grand-library')!;
+    expect(gl.net.gold ?? 0).toBe(0);
   });
 });

@@ -49,26 +49,36 @@ function regen(v: { cur: number; max: number; regen: number }, dt: number): void
  * fast-forward) and offline catch-up route through here, keeping them bit-for-bit
  * consistent (see offline.ts).
  *
- * There is NO iteration cap here: this is the *intentional* fast-forward, not the
- * live-loop spiral guard (that lives in createAccumulator's MAX_CATCHUP_STEPS).
+ * By default there is NO iteration cap: this is the *intentional* fast-forward, not
+ * the live-loop spiral guard (that lives in createAccumulator's MAX_CATCHUP_STEPS).
  * Callers bound the DURATION instead — offline by OFFLINE_CAP_MS, the CLI by its arg.
+ *
+ * `maxSteps` (default Infinity) is an OPT-IN ceiling on the whole-tick count so a
+ * caller handed an absurd duration can stay responsive instead of hanging. Existing
+ * callers pass nothing → Infinity → identical behavior; only the CLI opts in (so a
+ * `sim 1e9` truncates promptly rather than grinding through 1e10 steps).
  */
-export function advanceFixed(state: GameState, seconds: number): void {
+export function advanceFixed(state: GameState, seconds: number, maxSteps: number = Infinity): void {
   if (seconds <= 0 || !Number.isFinite(seconds)) return;
   // +epsilon so a clean multiple (e.g. 10800/0.1) floors to the exact tick count
   // instead of one-short from 0.1's binary representation.
-  const whole = Math.floor(seconds / TICK + 1e-9);
+  const whole = Math.min(Math.floor(seconds / TICK + 1e-9), maxSteps);
   for (let i = 0; i < whole; i++) step(state, TICK);
-  const remainder = seconds - whole * TICK;
-  if (remainder > 1e-9) step(state, remainder);
+  // Skip the sub-TICK remainder when the step ceiling truncated us: a bounded run stops
+  // at the budget and must not tack on the leftover of a duration it never reached.
+  if (whole < maxSteps) {
+    const remainder = seconds - whole * TICK;
+    if (remainder > 1e-9) step(state, remainder);
+  }
 }
 
 /**
  * Headless deterministic fast-forward: run `seconds` in exact TICK increments.
- * Returns the same state object (mutated) for convenience.
+ * Returns the same state object (mutated) for convenience. `maxSteps` (default
+ * Infinity) forwards the opt-in step ceiling described on advanceFixed.
  */
-export function simulate(state: GameState, seconds: number): GameState {
-  advanceFixed(state, seconds);
+export function simulate(state: GameState, seconds: number, maxSteps: number = Infinity): GameState {
+  advanceFixed(state, seconds, maxSteps);
   return state;
 }
 

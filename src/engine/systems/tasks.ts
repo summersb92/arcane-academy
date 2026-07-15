@@ -227,7 +227,11 @@ function stepTask(state: GameState, def: TaskDef, rt: TaskRuntime, dt: number): 
   }
   rt.progress += dt / length;
   let guard = 0;
-  while (rt.progress >= 1 && guard++ < 1000) {
+  // Complete within EPS of 1: a `length` that divides dt evenly (e.g. Grand Library
+  // length:8 over 0.1s ticks) accumulates to 0.9999999999999984, not exactly 1, from
+  // 0.1's binary representation — the same reason advanceFixed() floors with +1e-9.
+  // Without this the task would strand its slot + spent start-cost for one extra tick.
+  while (rt.progress >= 1 - EPS && guard++ < 1000) {
     completeCycle(state, def, rt);
     if (!continueAfterCompletion(state, def, rt)) break;
     rt.progress -= 1;
@@ -337,7 +341,13 @@ function netPerSecond(state: GameState, def: TaskDef): Partial<Record<AmountId, 
   } else if (def.type === 'running' || def.type === 'limited') {
     const len = def.length && def.length > 0 ? def.length : 1;
     for (const o of def.output ?? []) add(o.id, (o.amount * mult) / len);
-    for (const c of def.startCost ?? []) add(c.id, -c.amount / len);
+    // Amortize the start-cost over the cycle length for RUNNING only: a repeating
+    // Running task re-pays startCost every cycle, so startCost/len is its true average
+    // drain. A Limited task pays its start-cost once (in startTask) and never repeats,
+    // so amortizing it here would show a phantom per-second drain the whole build.
+    if (def.type === 'running') {
+      for (const c of def.startCost ?? []) add(c.id, -c.amount / len);
+    }
     for (const c of def.runCost ?? []) add(c.id, -c.amount);
   }
   // Cap-awareness: zero out any positive resource rate whose pool is already at cap.
