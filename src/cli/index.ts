@@ -142,7 +142,7 @@ function renderState(state: GameState): string {
   return [
     `phase=${state.run.phase} act=${state.run.act} playtime=${state.playtime.toFixed(1)}s seed=${state.seed}`,
     `gold=${formatNumber(r.gold)} insight=${formatNumber(r.insight)}/${formatNumber(caps.insight)}${insightCapped} renown=${formatNumber(r.renown)}`,
-    `materials: moonpetal=${r.moonpetal} ironOre=${r.ironOre} spiritDust=${r.spiritDust}`,
+    `materials: moonpetal=${r.moonpetal} ironOre=${r.ironOre} spiritDust=${r.spiritDust} scroll=${r.scroll}`,
     `vitals: life=${v.life.cur.toFixed(1)}/${v.life.max} stamina=${v.stamina.cur.toFixed(1)}/${v.stamina.max} mana=${v.mana.cur.toFixed(1)}/${v.mana.max}`,
     `essence(awakened): ${awakened || '(none)'}`,
     `skills: ${state.run.skills.length ? state.run.skills.join(', ') : '(none)'}`,

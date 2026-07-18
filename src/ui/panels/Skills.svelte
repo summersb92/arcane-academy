@@ -21,7 +21,8 @@
   <h2>Skills · Cantrips</h2>
   <div class="sub">
     Spend ◈ Insight to learn cantrips. Each needs its prerequisites first; awakening an element starts that
-    essence's trickle. A cost marked <span class="cap">*</span> exceeds your Insight Max.
+    essence's trickle. Every cantrip past the opener also costs a 📜 Scroll. A cost marked
+    <span class="cap">*</span> exceeds your Insight Max.
   </div>
 
   {#if owned.length > 0}
@@ -52,11 +53,16 @@
       >
         <div class="tt">
           <span class="nm">{c.name}</span>
-          <span class="chip cost">{c.cost}{#if c.capMark}<span class="cap">{c.capMark}</span>{/if}</span>
+          <span class="costs">
+            <span class="chip cost">{c.cost}{#if c.capMark}<span class="cap">{c.capMark}</span>{/if}</span>
+            {#if c.scrollCost > 0}
+              <span class="chip scroll" class:need={!c.hasScroll}>📜 {c.scrollCost}</span>
+            {/if}
+          </span>
         </div>
         <div class="io blurb">{c.blurb}</div>
         <div class="io payoff" class:cantpay={!c.affordable}>
-          {c.effectText}{#if c.capMark} · exceeds Insight Max{:else if !c.affordable} · need more ◈{/if}
+          {c.effectText}{#if c.capMark} · exceeds Insight Max{:else if !c.hasScroll} · needs a 📜 Scroll{:else if !c.affordable} · need more ◈{/if}
         </div>
       </div>
     {/each}
@@ -72,7 +78,12 @@
         <div class="tcard locked" style="border-left-color:var(--{c.cls})" title={c.capNote ?? 'Requirements unmet'}>
           <div class="tt">
             <span class="nm">🔒 {c.name}</span>
-            <span class="chip cost">{c.cost}{#if c.capMark}<span class="cap">{c.capMark}</span>{/if}</span>
+            <span class="costs">
+              <span class="chip cost">{c.cost}{#if c.capMark}<span class="cap">{c.capMark}</span>{/if}</span>
+              {#if c.scrollCost > 0}
+                <span class="chip scroll">📜 {c.scrollCost}</span>
+              {/if}
+            </span>
           </div>
           <div class="io lockt">{c.prereqNote ?? ''}</div>
           <div class="io payoff">{c.effectText}</div>
@@ -94,8 +105,21 @@
   .payoff.cantpay {
     color: var(--faint);
   }
+  .costs {
+    display: inline-flex;
+    gap: 4px;
+    align-items: baseline;
+  }
   .cost {
     color: var(--insight);
+  }
+  .scroll {
+    color: var(--dim);
+  }
+  /* Not enough Scrolls on hand → the requirement reads as unmet. */
+  .scroll.need {
+    color: var(--life);
+    border-color: var(--life);
   }
   .cap {
     color: var(--gold);

@@ -135,7 +135,7 @@ header {
 .body {
   flex: 1; min-height: 0;
   display: grid;
-  grid-template-columns: var(--left-w, 210px) 6px minmax(0, 1fr) 6px var(--right-w, 236px);
+  grid-template-columns: var(--left-w, 240px) 6px minmax(0, 1fr) 6px var(--right-w, 320px);
   grid-template-rows: minmax(0, 1fr);
 }
 .left { padding: 12px; border-right: 1px solid var(--edge); background: var(--col-left); overflow-y: auto; min-height: 0; }

@@ -89,6 +89,10 @@ export function migrate(state: GameState, fromVersion: number): GameState {
     s = migrate1to2(s);
     v = 2;
   }
+  if (v === 2) {
+    s = migrate2to3(s);
+    v = 3;
+  }
   void v;
   s.version = SAVE_VERSION;
   return s;
@@ -121,6 +125,19 @@ function migrate1to2(s: GameState): GameState {
   return s;
 }
 
+/** v2 → v3 (v0.1.2): Scroll becomes a first-class crafting currency and the character
+ *  gains a name + title. Establish the new shape; normalize() below fills anything this
+ *  rung leaves untouched (a pre-v3 save has no Scroll → backfill 0, no name → unnamed). */
+function migrate2to3(s: GameState): GameState {
+  const run = (s.run ??= {} as GameState['run']);
+  if (run.resources && typeof run.resources === 'object' && typeof run.resources.scroll !== 'number') {
+    run.resources.scroll = 0;
+  }
+  if (typeof run.name !== 'string') run.name = '';
+  if (typeof run.title !== 'string') run.title = 'Waif';
+  return s;
+}
+
 // --- clipboard export/import (same portable format, compact) ---
 export const exportString = (state: GameState): string => serialize(state, false);
 export const importString = (text: string): GameState => deserialize(text);
@@ -150,7 +167,7 @@ function peekVersion(text: string): number | undefined {
   }
 }
 
-const RESOURCE_IDS: ResourceId[] = ['gold', 'insight', 'renown', 'moonpetal', 'ironOre', 'spiritDust'];
+const RESOURCE_IDS: ResourceId[] = ['gold', 'insight', 'renown', 'moonpetal', 'ironOre', 'spiritDust', 'scroll'];
 const CAP_IDS = ['gold', 'insight', 'moonpetal', 'ironOre', 'spiritDust'] as const;
 const VITAL_IDS = ['life', 'stamina', 'mana'] as const;
 
@@ -192,6 +209,10 @@ export function normalize(state: GameState): void {
   if (typeof run.act !== 'number') run.act = 1;
   if (typeof run.activitySlots !== 'number') run.activitySlots = STARTING.activitySlots;
 
+  // character model (v0.1.2) — read models spread run.name/title on render (Player view).
+  if (typeof run.name !== 'string') run.name = '';
+  if (typeof run.title !== 'string') run.title = 'Waif';
+
   // home (v0.1.1) — read models spread run.home.equipped/owned on render, so back it up.
   if (!run.home || typeof run.home !== 'object') run.home = { tier: 'vagrant', owned: [], equipped: [] };
   if (typeof run.home.tier !== 'string') run.home.tier = 'vagrant';
@@ -232,6 +253,9 @@ export function normalize(state: GameState): void {
 function validate(state: GameState): void {
   const run = state?.run;
   if (!run || typeof run !== 'object') throw new Error('Save missing run state.');
+
+  if (typeof run.name !== 'string') throw new Error('Save run.name is not a string.');
+  if (typeof run.title !== 'string') throw new Error('Save run.title is not a string.');
 
   if (!run.resources || typeof run.resources !== 'object') throw new Error('Save missing resources.');
   for (const [k, val] of Object.entries(run.resources)) {

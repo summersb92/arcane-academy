@@ -41,6 +41,7 @@ export type TaskEffect =
   | { kind: 'activitySlot'; amount: number }
   | { kind: 'flag'; flag: string; value?: boolean }
   | { kind: 'raiseInsightCap'; amount: number }
+  | { kind: 'raiseGoldCap'; amount: number } // Coin Pouch upgrade tasks lift the Gold cap (v0.1.2)
   | { kind: 'awakenElement'; element: ElementId }; // Home Ossuary awakens ☾ Dark on build (T-006)
 
 /** "At N" repeat-scaling: once completions reach `at`, each completion's primary
@@ -56,6 +57,7 @@ export interface TaskDef {
   type: TaskType;
   tag: string; // category label (docs/10 §5) — also the raw group the UI splits on (Contract/Founding/Odd Jobs)
   cls: string; // coloured left-edge / element class — matches a CSS var name (gold, insight, fire, dark…)
+  blurb?: string; // one-line flavour text for the hover tooltip (evocative, a little wry — v0.1.1)
   panel?: 'main' | 'home'; // which tab hosts the card (default 'main'; the Founding → 'home') — T-006
   chip?: string; // chip label override; defaults from type
   job?: boolean; // an Odd Job — Tool Belt's jobOutputMult applies to its output (v0.1.1)
@@ -86,6 +88,7 @@ const CORE_TASKS: TaskDef[] = [
     type: 'instant',
     tag: 'Odd Jobs',
     cls: 'gold',
+    blurb: 'Palm out, pride pocketed — every empire starts with a copper or two.',
     job: true,
     output: [A('resource', 'gold', 0.1)],
   },
@@ -95,6 +98,7 @@ const CORE_TASKS: TaskDef[] = [
     type: 'instant',
     tag: 'Odd Jobs',
     cls: 'gold',
+    blurb: 'Muck, straw, and honest coin. The horses judge you, but they pay.',
     job: true,
     startCost: [A('vital', 'stamina', 1)],
     output: [A('resource', 'gold', 0.25)],
@@ -106,6 +110,7 @@ const CORE_TASKS: TaskDef[] = [
     type: 'instant',
     tag: 'Odd Jobs',
     cls: 'gold',
+    blurb: 'Steady hands wanted. The regulars have started nodding when you pass.',
     job: true,
     startCost: [A('vital', 'stamina', 2)],
     output: [A('resource', 'gold', 0.8)],
@@ -119,6 +124,7 @@ const CORE_TASKS: TaskDef[] = [
     type: 'instant',
     tag: 'Odd Jobs',
     cls: 'gold',
+    blurb: "Parcels across town, questions unasked — a runner the whole quarter trusts.",
     job: true,
     startCost: [A('vital', 'stamina', 3)],
     output: [A('resource', 'gold', 1.6)],
@@ -131,20 +137,24 @@ const CORE_TASKS: TaskDef[] = [
     type: 'instant',
     tag: 'Odd Jobs',
     cls: 'earth',
+    blurb: 'Pick through the ruins and pocket whatever the rubble surrenders.',
     startCost: [A('vital', 'stamina', 2)],
     randomOutput: { pool: 'resource', ids: ['moonpetal', 'ironOre', 'spiritDust'], amount: 1 },
     requires: [{ kind: 'taskCount', id: 'clean-stables', atLeast: 32 }],
   },
   {
+    // Turn raw Insight into a keepable Scroll — the crafting currency every cantrip past
+    // the opener demands. An early instant, gated only on having learned to read (v0.1.2).
     id: 'scribe-scroll',
     name: 'Scribe Scroll',
     type: 'instant',
     tag: 'Crafting',
     cls: 'insight',
-    startCost: [A('resource', 'insight', 10)],
-    output: [A('resource', 'spiritDust', 1)],
-    atN: [{ at: 5, bonus: 1 }], // At 5: +1 Spirit Dust per scribe
-    requires: [{ kind: 'skill', id: 'read-the-page' }, { kind: 'flag', flag: 'lairFounded' }],
+    blurb: "Ink, vellum, and a patient hand — you're on a roll, spinning Insight into Scrolls.",
+    startCost: [A('resource', 'insight', 3), A('vital', 'stamina', 1)],
+    output: [A('resource', 'scroll', 1)],
+    atN: [{ at: 5, bonus: 1 }], // At 5: +1 Scroll per scribe (a practised hand)
+    requires: [{ kind: 'skill', id: 'read-the-page' }],
   },
   {
     id: 'smith',
@@ -152,6 +162,7 @@ const CORE_TASKS: TaskDef[] = [
     type: 'running',
     tag: 'Craftwork',
     cls: 'gold',
+    blurb: 'Hammer, heat, and repetition — sweat traded steadily for honest Gold.',
     length: 15,
     repeatable: true,
     runCost: [A('vital', 'stamina', 0.4)],
@@ -163,6 +174,7 @@ const CORE_TASKS: TaskDef[] = [
     type: 'perpetual',
     tag: 'Research',
     cls: 'insight',
+    blurb: 'Bend over the books until the world narrows to one glowing idea.',
     runCost: [A('vital', 'stamina', 0.2)],
     output: [A('resource', 'insight', 0.55)],
     requires: [{ kind: 'flag', flag: 'awakened' }], // the spark un-gates Study (T-005)
@@ -173,6 +185,7 @@ const CORE_TASKS: TaskDef[] = [
     type: 'perpetual',
     tag: 'Rest',
     cls: 'mana',
+    blurb: 'Sit, breathe, let the aches drain away. Even a mage must sleep.',
     output: [A('vital', 'stamina', 0.8), A('vital', 'mana', 0.5), A('vital', 'life', 0.5)],
   },
   {
@@ -181,6 +194,7 @@ const CORE_TASKS: TaskDef[] = [
     type: 'limited',
     tag: 'Storage',
     cls: 'earth',
+    blurb: 'Knock through a wall and claim the next room — space enough for one more pursuit.',
     chip: 'Upgrade',
     length: 6,
     max: 1,
@@ -188,11 +202,41 @@ const CORE_TASKS: TaskDef[] = [
     effects: [{ kind: 'activitySlot', amount: 1 }], // Activity slots 2 → 3
   },
   {
+    // Cheap, early Gold-cap raiser — build up to three for a Gold cap of 25 → 50 → 75 → 100.
+    // No lair gate: caps must be able to grow from the very first coppers (v0.1.2).
+    id: 'coin-pouch',
+    name: 'Coin Pouch',
+    type: 'limited',
+    tag: 'Storage',
+    cls: 'gold',
+    blurb: 'Stitch a roomier purse for a swelling hoard — pouch comes to shove.',
+    chip: 'Upgrade',
+    length: 3,
+    max: 3,
+    startCost: [A('resource', 'gold', 20)],
+    effects: [{ kind: 'raiseGoldCap', amount: 25 }], // Gold cap +25 per build (25 → 100)
+  },
+  {
+    // Cheap, early Insight-cap raiser — build up to three for an Insight cap of 5 → 10 → 15 → 20.
+    id: 'notebook',
+    name: 'Notebook',
+    type: 'limited',
+    tag: 'Storage',
+    cls: 'insight',
+    blurb: 'Fresh blank pages for a fuller mind — we took notes, it checks out.',
+    chip: 'Upgrade',
+    length: 3,
+    max: 3,
+    startCost: [A('resource', 'gold', 20)],
+    effects: [{ kind: 'raiseInsightCap', amount: 5 }], // Insight cap +5 per build (5 → 20)
+  },
+  {
     id: 'grand-library',
     name: 'Grand Library',
     type: 'limited',
     tag: 'Storage',
     cls: 'insight',
+    blurb: 'Shelves to the rafters — suddenly there is room for far more Insight than a mind alone can hold.',
     chip: 'Upgrade',
     length: 8,
     max: 1,
@@ -218,6 +262,7 @@ export const AMOUNT_LABEL: Record<string, string> = {
   moonpetal: 'Moonpetal',
   ironOre: 'Iron Ore',
   spiritDust: 'Spirit Dust',
+  scroll: 'Scroll',
   life: 'Life',
   stamina: 'Stamina',
   mana: 'Mana',

@@ -4,7 +4,19 @@
   // plus EQUIPPABLE ITEMS. This panel is driven entirely off the `home` view-model from
   // the store (tiers[] + items[]); it does not re-implement any gating logic. The
   // Founding still lives here as normal home-panel tasks (panel:'home').
-  import { game, dispatchTask, moveHome, buyItem, equipItem, unequipItem } from '../stores';
+  import {
+    game,
+    dispatchTask,
+    moveHome,
+    buyItem,
+    equipItem,
+    unequipItem,
+    openTip,
+    hideTooltip,
+    taskTooltip,
+    homeTierTooltip,
+    homeItemTooltip,
+  } from '../stores';
   import type { TaskView } from '../stores';
   import { fmt } from '../format';
 
@@ -44,7 +56,14 @@
   <h2 class="mt">Residence <span class="tag" style="font-weight:400">· move for more item slots</span></h2>
   <div class="hgrid">
     {#each home.tiers as t (t.id)}
-      <div class="hcard" class:current={t.current} class:dimmed={t.locked}>
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <div
+        class="hcard"
+        class:current={t.current}
+        class:dimmed={t.locked}
+        on:mouseenter={(e) => openTip(e, homeTierTooltip(t))}
+        on:mouseleave={hideTooltip}
+      >
         <div class="tt">
           <span class="nm">{#if t.current}★ {/if}{t.name}</span>
           <span class="chip">{t.slots} slots</span>
@@ -60,6 +79,8 @@
           disabled={t.current || t.locked || !t.reachable}
           title={t.current ? 'Current residence' : t.locked ? (t.reason ?? 'locked') : `Move to ${t.name}`}
           on:click={() => moveHome(t.id)}
+          on:focus={(e) => openTip(e, homeTierTooltip(t))}
+          on:blur={hideTooltip}
         >{t.current ? 'Current' : 'Move in'}</button>
       </div>
     {/each}
@@ -71,7 +92,14 @@
   </h2>
   <div class="hgrid">
     {#each home.items as it (it.id)}
-      <div class="hcard" class:equipped={it.equipped} class:dimmed={it.locked && !it.owned}>
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <div
+        class="hcard"
+        class:equipped={it.equipped}
+        class:dimmed={it.locked && !it.owned}
+        on:mouseenter={(e) => openTip(e, homeItemTooltip(it))}
+        on:mouseleave={hideTooltip}
+      >
         <div class="tt">
           <span class="nm">{it.name}</span>
           {#if it.equipped}
@@ -94,15 +122,25 @@
               disabled={!it.affordable || it.locked}
               title={it.locked ? (it.reason ?? 'locked') : !it.affordable ? "Can't afford" : `Buy ${it.name}`}
               on:click={() => buyItem(it.id)}
+              on:focus={(e) => openTip(e, homeItemTooltip(it))}
+              on:blur={hideTooltip}
             >Buy</button>
           {:else if it.equipped}
-            <button class="btn" title={`Unequip ${it.name}`} on:click={() => unequipItem(it.id)}>Unequip</button>
+            <button
+              class="btn"
+              title={`Unequip ${it.name}`}
+              on:click={() => unequipItem(it.id)}
+              on:focus={(e) => openTip(e, homeItemTooltip(it))}
+              on:blur={hideTooltip}
+            >Unequip</button>
           {:else}
             <button
               class="btn"
               disabled={!slotFree}
               title={slotFree ? `Equip ${it.name}` : 'No free slot — unequip something or move to a larger residence'}
               on:click={() => equipItem(it.id)}
+              on:focus={(e) => openTip(e, homeItemTooltip(it))}
+              on:blur={hideTooltip}
             >Equip</button>
           {/if}
         </div>
@@ -156,8 +194,12 @@
           tabindex="0"
           title="Click to stop"
           style="border-left-color:var(--{t.cls})"
-          on:click={() => dispatchTask(t)}
+          on:click={() => { hideTooltip(); dispatchTask(t); }}
           on:keydown={(e) => onKey(e, t)}
+          on:mouseenter={(e) => openTip(e, taskTooltip(t))}
+          on:focus={(e) => openTip(e, taskTooltip(t))}
+          on:mouseleave={hideTooltip}
+          on:blur={hideTooltip}
         >
           <div class="tt"><span class="nm">{t.name}</span><span class="chip">{t.kind}</span></div>
           {#if t.timed}
@@ -185,8 +227,12 @@
         aria-disabled={t.locked}
         title={t.locked ? 'Requirements unmet' : 'Click to begin'}
         style="border-left-color:var(--{t.cls})"
-        on:click={() => dispatchTask(t)}
+        on:click={() => { hideTooltip(); dispatchTask(t); }}
         on:keydown={(e) => onKey(e, t)}
+        on:mouseenter={(e) => openTip(e, taskTooltip(t))}
+        on:focus={(e) => openTip(e, taskTooltip(t))}
+        on:mouseleave={hideTooltip}
+        on:blur={hideTooltip}
       >
         <div class="tt">
           <span class="nm">{#if t.locked}🔒 {/if}{t.name}</span><span class="chip">{t.kind}</span>

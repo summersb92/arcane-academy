@@ -15,9 +15,11 @@ import {
   effectiveCap,
 } from '../src/engine/systems/home';
 import { learnCantrip } from '../src/engine/systems/skills';
+import { breakdown } from '../src/engine/systems/breakdown';
 import { foundingStatus, canFound } from '../src/engine/systems/founding';
 import { runProgression, isAwakened } from '../src/engine/systems/progression';
-import { FOUNDING, LAIR } from '../src/content/config';
+import { FOUNDING, LAIR, STARTING } from '../src/content/config';
+import { TASK_BY_ID } from '../src/content/tasks';
 import { toView } from '../src/ui/stores';
 
 /** A Phase-3 hedge-mage: awakened, Fire open + stocked, lair claimed, funds on hand. */
@@ -108,20 +110,19 @@ describe('home items & tiers', () => {
     expect(s.run.resources.insight).toBeCloseTo(0.12 * 10, 5); // +0.12/s for 10s
   });
 
-  it('a Coin Pouch raises the effective Gold cap, and a Warded Chest raises material caps', () => {
+  it('a Warded Chest raises material caps, and Vagrant has only one item slot', () => {
     const s = newGame(7);
-    s.run.resources.gold = 70; // enough for both (30 + 40)
-    expect(effectiveCap(s, 'gold')).toBe(50);
+    s.run.resources.gold = 100; // enough for both (40 + 40)
     expect(effectiveCap(s, 'moonpetal')).toBe(50);
 
-    buyItem(s, 'coin-pouch');
-    equipItem(s, 'coin-pouch');
-    expect(effectiveCap(s, 'gold')).toBe(100); // 50 + 50
+    expect(buyItem(s, 'warded-chest')).toBe(true);
+    expect(equipItem(s, 'warded-chest')).toBe(true);
+    expect(effectiveCap(s, 'moonpetal')).toBe(100); // 50 + 50
 
-    buyItem(s, 'warded-chest');
-    equipItem(s, 'warded-chest'); // vagrant only has 1 slot…
-    // …so the second equip fails until we move up; the Coin Pouch stays equipped.
-    expect(s.run.home.equipped).toEqual(['coin-pouch']);
+    buyItem(s, 'tool-belt');
+    expect(equipItem(s, 'tool-belt')).toBe(false); // vagrant only has 1 slot…
+    // …so the second equip fails; the Warded Chest stays equipped.
+    expect(s.run.home.equipped).toEqual(['warded-chest']);
   });
 
   it('the Mana Crystal is gated on Inner Wellspring; Inn move is gated on the lair', () => {
@@ -130,6 +131,7 @@ describe('home items & tiers', () => {
     // Mana Crystal needs the Inner Wellspring cantrip first.
     expect(buyItem(s, 'mana-crystal')).toBe(false);
     s.run.resources.insight = 100;
+    s.run.resources.scroll = 1; // Inner Wellspring costs a Scroll (v0.1.2)
     learnCantrip(s, 'read-the-page');
     learnCantrip(s, 'inner-wellspring');
     expect(buyItem(s, 'mana-crystal')).toBe(true);
@@ -158,7 +160,7 @@ describe('view-model reflects equipped items', () => {
     expect(s.run.vitals.life.regen).toBeCloseTo(baseLifeRegen, 6);
   });
 
-  it('a Focusing Lens shows in the Insight rate AND its sourced-number tooltip', () => {
+  it('a Focusing Lens shows in the Insight rate AND its breakdown names it as a producer', () => {
     const s = newGame(31);
     s.run.resources.gold = 30;
     s.run.resources.spiritDust = 2;
@@ -167,11 +169,15 @@ describe('view-model reflects equipped items', () => {
 
     const insight = toView(s).resources.insight;
     expect(insight.rate).toBeCloseTo(0.12, 6); // home production folds into the shown rate
-    expect(insight.rateTip).toContain('Focusing Lens'); // …and the breakdown names it
-    expect(insight.rateTip).toContain('0.12');
+
+    const b = breakdown(s, { kind: 'resource', id: 'insight' });
+    const lens = b.produces.find((p) => p.name === 'Focusing Lens');
+    expect(lens).toBeDefined();
+    expect(lens!.amount).toBeCloseTo(0.12, 6);
+    expect(b.net).toBeCloseTo(0.12, 6);
   });
 
-  it('a Hearth Stone shows in the Fire essence rate AND its sourced-number tooltip', () => {
+  it('a Hearth Stone shows in the Fire essence rate AND its breakdown names it as a producer', () => {
     const s = newGame(32);
     s.run.resources.gold = 25;
     s.run.resources.ironOre = 2;
@@ -181,7 +187,10 @@ describe('view-model reflects equipped items', () => {
     const fire = toView(s).essence.find((e) => e.id === 'fire')!;
     expect(fire.awakened).toBe(true);
     expect(fire.rate).toBeCloseTo(0.15, 6);
-    expect(fire.rateTip).toContain('Hearth Stone');
+
+    const b = breakdown(s, { kind: 'essence', id: 'fire' });
+    expect(b.produces.some((p) => p.name === 'Hearth Stone')).toBe(true);
+    expect(b.net).toBeCloseTo(0.15, 6);
   });
 });
 
@@ -302,5 +311,21 @@ describe('the lair beat (Home reveal)', () => {
     runProgression(s);
     expect(isAwakened(s)).toBe(false);
     expect(s.run.flags.lairFounded ?? false).toBe(false);
+  });
+
+  // Winnability invariant (v0.1.2): with capped Gold, the Founding must stay AFFORDABLE
+  // under the highest Gold cap the player can actually reach. Regression guard for the
+  // soft-lock where Site cost (120) once exceeded the reachable ceiling (100).
+  it('the Founding fits under the reachable Gold ceiling', () => {
+    const pouch = TASK_BY_ID['coin-pouch'];
+    const perBuild = pouch.effects?.find((e) => e.kind === 'raiseGoldCap') as
+      | { kind: 'raiseGoldCap'; amount: number }
+      | undefined;
+    const maxGoldCap = STARTING.goldCap + (perBuild?.amount ?? 0) * (pouch.max ?? 0);
+    // Site (the big sink) and the Charter must be affordable; the held-Gold finale gate
+    // must sit STRICTLY below the ceiling so it isn't pinned exactly at the cap.
+    expect(maxGoldCap).toBeGreaterThanOrEqual(FOUNDING.siteCost);
+    expect(maxGoldCap).toBeGreaterThanOrEqual(FOUNDING.charterCost);
+    expect(maxGoldCap).toBeGreaterThan(FOUNDING.goldHeld);
   });
 });

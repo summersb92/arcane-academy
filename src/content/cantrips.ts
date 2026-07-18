@@ -25,6 +25,7 @@ export interface Cantrip {
   name: string;
   blurb: string;
   cost: number; // Insight ◈ spent to learn
+  scrollCost?: number; // Scrolls 📜 spent to learn (v0.1.2) — 0 for the free opener, 1 for the rest
   requires: string[]; // prerequisite cantrip ids (DAG edges)
   effects: CantripEffect[];
 }
@@ -48,6 +49,7 @@ export const CANTRIPS: Cantrip[] = [
     name: 'Read the Page',
     blurb: 'The torn grimoire page settles into meaning. The cantrip web opens.',
     cost: 5,
+    scrollCost: 0, // the free opener — Insight only; learning it unlocks scribing Scrolls
     requires: [],
     effects: [{ kind: 'openTree' }],
   },
@@ -56,6 +58,7 @@ export const CANTRIPS: Cantrip[] = [
     name: 'Spark',
     blurb: 'A word of ignition. ▲ Fire essence begins to trickle into you.',
     cost: 20,
+    scrollCost: 1,
     requires: ['read-the-page'],
     effects: [{ kind: 'awaken', element: 'fire', trickle: 0.2 }],
   },
@@ -64,6 +67,7 @@ export const CANTRIPS: Cantrip[] = [
     name: 'Mend',
     blurb: 'Knit small hurts closed — your Stamina recovers faster.',
     cost: 15,
+    scrollCost: 1,
     requires: ['read-the-page'],
     effects: [{ kind: 'vitalRegen', vital: 'stamina', amount: 0.3 }],
   },
@@ -72,6 +76,7 @@ export const CANTRIPS: Cantrip[] = [
     name: 'Inner Wellspring',
     blurb: 'A hidden font opens within — Mana unlocks and begins to pool.',
     cost: 15,
+    scrollCost: 1,
     requires: ['read-the-page'],
     effects: [{ kind: 'unlockVital', vital: 'mana', max: 10, regen: 0.1 }],
   },
@@ -80,6 +85,7 @@ export const CANTRIPS: Cantrip[] = [
     name: 'Kindle Focus',
     blurb: 'Hold the flame steady in the mind. +10% to all output.',
     cost: 40,
+    scrollCost: 1,
     requires: ['spark'],
     effects: [{ kind: 'outputMult', add: 0.1 }],
   },
@@ -88,6 +94,7 @@ export const CANTRIPS: Cantrip[] = [
     name: 'Umbral Whisper',
     blurb: 'Speak to the dark between the stars. ☾ Dark essence trickles — but the words demand more Insight than you can yet hold.',
     cost: 120,
+    scrollCost: 1,
     requires: ['read-the-page'],
     effects: [{ kind: 'awaken', element: 'dark', trickle: 0.15 }],
   },

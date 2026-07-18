@@ -33,7 +33,7 @@ import { logEvent } from './chronicle';
 import { outputMult } from './skills';
 import { effectiveCap, jobOutputMult } from './home';
 
-const RESOURCE_IDS: ResourceId[] = ['gold', 'insight', 'renown', 'moonpetal', 'ironOre', 'spiritDust'];
+const RESOURCE_IDS: ResourceId[] = ['gold', 'insight', 'renown', 'moonpetal', 'ironOre', 'spiritDust', 'scroll'];
 const EPS = 1e-9;
 
 /** Total output multiplier for a task: the global Kindle Focus mult, plus the Tool
@@ -175,6 +175,9 @@ function applyEffect(state: GameState, e: TaskEffect): void {
       break;
     case 'raiseInsightCap':
       state.run.caps.insight += e.amount;
+      break;
+    case 'raiseGoldCap':
+      state.run.caps.gold += e.amount;
       break;
     case 'awakenElement': {
       // Home Ossuary awakens ☾ Dark on its first build. Idempotent across levels —

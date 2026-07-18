@@ -19,6 +19,7 @@ describe('cantrips', () => {
     const s = newGame(1);
     s.run.flags.awakened = true;
     s.run.resources.insight = 100;
+    s.run.resources.scroll = 1; // Spark needs a Scroll to learn (v0.1.2)
 
     // Spark needs "Read the Page" first — refused until then, no Insight spent.
     expect(learnCantrip(s, 'spark')).toBe(false);
@@ -56,6 +57,7 @@ describe('cantrips', () => {
     const s = newGame(3);
     s.run.flags.awakened = true;
     s.run.resources.insight = 1000;
+    s.run.resources.scroll = 2; // Spark + Kindle Focus each cost a Scroll (v0.1.2)
     learnCantrip(s, 'read-the-page');
     learnCantrip(s, 'spark');
     expect(outputMult(s)).toBeCloseTo(1, 6); // none yet
@@ -72,6 +74,7 @@ describe('cantrips', () => {
     const s = newGame(4);
     s.run.flags.awakened = true;
     s.run.resources.insight = 1000;
+    s.run.resources.scroll = 1; // Mend costs a Scroll (v0.1.2)
     learnCantrip(s, 'read-the-page');
     const before = s.run.vitals.stamina.regen; // 0.15 (v0.1.1 base)
     expect(learnCantrip(s, 'mend')).toBe(true);
@@ -88,23 +91,23 @@ describe('insight cap', () => {
     s.run.flags.awakened = true;
     s.run.flags.lairFounded = true; // Grand Library is now gated on the lair (v0.1.1)
     const uw = () => listCantripInfo(s).find((c) => c.id === 'umbral-whisper')!;
-    expect(uw().exceedsCap).toBe(true); // cost 120 > base cap 100
+    expect(uw().exceedsCap).toBe(true); // cost 120 > base cap 5 (v0.1.2)
 
-    // Build the Grand Library (limited task) to raise the Insight cap 100 → 250.
+    // Build the Grand Library (limited task) to raise the Insight cap 5 → 155 (+150).
     s.run.resources.gold = 100;
     expect(startTask(s, 'grand-library')).toBe(true);
     simulate(s, 9); // 8s build
-    expect(s.run.caps.insight).toBe(250);
-    expect(uw().exceedsCap).toBe(false);
+    expect(s.run.caps.insight).toBe(155);
+    expect(uw().exceedsCap).toBe(false); // 120 < 155
   });
 
   it('the tick clamps Insight to its cap', () => {
     const s = newGame(6);
     s.run.flags.awakened = true;
-    s.run.resources.insight = 99.9;
+    s.run.resources.insight = s.run.caps.insight - 0.1; // just under the (tight v0.1.2) cap
     startTask(s, 'study');
     step(s, 1); // 0.55 would overshoot → clamps at the cap
-    expect(s.run.resources.insight).toBeCloseTo(100, 6);
+    expect(s.run.resources.insight).toBeCloseTo(s.run.caps.insight, 6);
   });
 
   it('cap-aware payoff: Study reads +0.55/s below the cap, +0/s AT the cap (T-004 review fix)', () => {
@@ -117,7 +120,7 @@ describe('insight cap', () => {
     expect(listTaskInfo(s).find((i) => i.id === 'study')!.net.insight).toBeCloseTo(0.55, 6);
 
     // At cap: the gain is wasted, so the readout is 0 — not the phantom +0.55/s.
-    s.run.resources.insight = s.run.caps.insight; // 100
+    s.run.resources.insight = s.run.caps.insight; // the (tight v0.1.2) base cap
     expect(taskRates(s).resources.insight ?? 0).toBe(0);
     expect(listTaskInfo(s).find((i) => i.id === 'study')!.net.insight ?? 0).toBe(0);
   });
@@ -160,5 +163,38 @@ describe('the spark', () => {
     simulate(s, 100);
     const sparkLines = s.run.chronicle.filter((c) => c.text.includes('torn page')).length;
     expect(sparkLines).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scrolls gate cantrips (v0.1.2) — every cantrip past the free opener costs 1 Scroll
+// ---------------------------------------------------------------------------
+describe('cantrips require a Scroll (v0.1.2)', () => {
+  it('the opener is Insight-only, but a scroll-gated cantrip fails without a Scroll and succeeds with one', () => {
+    const s = newGame(1);
+    s.run.flags.awakened = true;
+    s.run.resources.insight = 100; // Insight is never the blocker here
+
+    // Read the Page (scrollCost 0) is the free opener — no Scroll needed.
+    expect(learnCantrip(s, 'read-the-page')).toBe(true);
+    expect(listCantripInfo(s).find((c) => c.id === 'read-the-page')!.scrollCost).toBe(0);
+
+    // Spark (scrollCost 1) is refused with no Scroll on hand — no Insight spent.
+    const spark = () => listCantripInfo(s).find((c) => c.id === 'spark')!;
+    expect(spark().scrollCost).toBe(1);
+    expect(spark().hasScroll).toBe(false);
+    expect(spark().affordable).toBe(false); // Insight ample, but no Scroll
+    const insightBefore = s.run.resources.insight;
+    expect(learnCantrip(s, 'spark')).toBe(false);
+    expect(s.run.skills).not.toContain('spark');
+    expect(s.run.resources.insight).toBe(insightBefore);
+
+    // With a Scroll, it learns and the Scroll is spent.
+    s.run.resources.scroll = 1;
+    expect(spark().hasScroll).toBe(true);
+    expect(spark().affordable).toBe(true);
+    expect(learnCantrip(s, 'spark')).toBe(true);
+    expect(s.run.resources.scroll).toBe(0); // the Scroll was consumed
+    expect(s.run.essence.fire.awakened).toBe(true);
   });
 });

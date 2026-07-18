@@ -118,23 +118,9 @@ export const HOME_TIERS: HomeTier[] = [
   },
 ];
 
+// NOTE (v0.1.2): Gold-cap raising moved OUT of equippable items and into the cheap early
+// Coin Pouch upgrade TASKS (content/tasks.ts). These items are the slotted passive gear.
 export const HOME_ITEMS: HomeItem[] = [
-  {
-    id: 'coin-pouch',
-    name: 'Coin Pouch',
-    blurb: 'A stout leather purse. Hold a little more Gold before it spills.',
-    cost: [A('resource', 'gold', 30)],
-    mods: [{ target: 'gold', kind: 'max', amount: 50 }],
-  },
-  {
-    id: 'strongbox',
-    name: 'Strongbox',
-    blurb: 'An iron-banded coffer. Serious storage for a serious purse.',
-    // 90 (not 100) so it's affordable with headroom under the 100 cap the Coin Pouch
-    // grants — no exact at-cap knife-edge while Inn rent nibbles the last coin.
-    cost: [A('resource', 'gold', 90), A('resource', 'ironOre', 3)],
-    mods: [{ target: 'gold', kind: 'max', amount: 150 }],
-  },
   {
     id: 'tool-belt',
     name: 'Tool Belt',

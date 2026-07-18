@@ -5,11 +5,11 @@ import { STARTING } from '../content/config';
 import type { HomeTierId } from '../content/home';
 import { seedFrom } from './rng';
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 export type ElementId = 'prism' | 'fire' | 'water' | 'earth' | 'air' | 'dark' | 'light';
 
-export type ResourceId = 'gold' | 'insight' | 'renown' | 'moonpetal' | 'ironOre' | 'spiritDust';
+export type ResourceId = 'gold' | 'insight' | 'renown' | 'moonpetal' | 'ironOre' | 'spiritDust' | 'scroll';
 
 export type VitalId = 'life' | 'stamina' | 'mana';
 
@@ -60,6 +60,8 @@ export interface ChronicleEntry {
 export interface RunState {
   act: number;
   phase: Phase;
+  name: string; // the mage's chosen name ('' until named — the character-creation trigger; v0.1.2)
+  title: string; // earned honorific ('Waif' at the Origin; v0.1.2)
   resources: Record<ResourceId, number>;
   caps: Caps;
   vitals: { life: Vital; stamina: Vital; mana: Vital };
@@ -107,6 +109,8 @@ export function newGame(seed: number = seedFrom(Date.now())): GameState {
     run: {
       act: 1,
       phase: 'origin',
+      name: '', // unnamed until character creation (needsNaming = true)
+      title: 'Waif', // the Origin honorific
       resources: {
         gold: STARTING.gold,
         insight: STARTING.insight,
@@ -114,6 +118,7 @@ export function newGame(seed: number = seedFrom(Date.now())): GameState {
         moonpetal: STARTING.moonpetal,
         ironOre: STARTING.ironOre,
         spiritDust: STARTING.spiritDust,
+        scroll: STARTING.scroll,
       },
       caps: {
         gold: STARTING.goldCap,

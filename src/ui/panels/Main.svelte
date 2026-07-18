@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { game, activeTab, dispatchTask, toggleTaskRepeat } from '../stores';
+  import { game, activeTab, dispatchTask, toggleTaskRepeat, openTip, hideTooltip, taskTooltip } from '../stores';
   import type { TaskView } from '../stores';
   import Skills from './Skills.svelte';
   import Home from './Home.svelte';
+  import Player from './Player.svelte';
 
   // Whole-card click hook (foundation left this for T-004). Defaults to the store dispatcher.
   export let onTask: (t: TaskView) => void = dispatchTask;
@@ -43,8 +44,12 @@
               tabindex="0"
               title="Click to stop"
               style="border-left-color:var(--{t.cls})"
-              on:click={() => onTask(t)}
+              on:click={() => { hideTooltip(); onTask(t); }}
               on:keydown={(e) => onKey(e, t)}
+              on:mouseenter={(e) => openTip(e, taskTooltip(t))}
+              on:focus={(e) => openTip(e, taskTooltip(t))}
+              on:mouseleave={hideTooltip}
+              on:blur={hideTooltip}
             >
               <div class="tt"><span class="nm">{t.name}</span><span class="chip">{t.kind}</span></div>
               {#if t.timed}
@@ -84,8 +89,12 @@
             aria-disabled={t.locked}
             title={t.locked ? 'Requirements unmet' : t.type === 'instant' ? 'Click to do' : 'Click to start'}
             style="border-left-color:var(--{t.cls})"
-            on:click={() => onTask(t)}
+            on:click={() => { hideTooltip(); onTask(t); }}
             on:keydown={(e) => onKey(e, t)}
+            on:mouseenter={(e) => openTip(e, taskTooltip(t))}
+            on:focus={(e) => openTip(e, taskTooltip(t))}
+            on:mouseleave={hideTooltip}
+            on:blur={hideTooltip}
           >
             <div class="tt">
               <span class="nm">{#if t.locked}🔒 {/if}{t.name}</span><span class="chip">{t.kind}</span>
@@ -104,6 +113,8 @@
         {/each}
       </div>
     </section>
+  {:else if $activeTab === 'player'}
+    <Player />
   {:else if $activeTab === 'skills'}
     <Skills />
   {:else if $activeTab === 'home'}

@@ -107,19 +107,20 @@ describe('auto-pause / auto-resume', () => {
 });
 
 describe('At-N repeat scaling', () => {
-  it('Scribe Scroll gains +1 output once it has been completed 5 times', () => {
+  it('Scribe Scroll gains +1 Scroll once it has been completed 5 times', () => {
     const s = newGame(1);
-    s.run.flags.lairFounded = true; // Scribe Scroll is now gated on the lair…
-    s.run.skills = ['read-the-page']; // …and on Read the Page (v0.1.1)
-    s.run.resources.insight = 1000; // plenty to afford 6 scribes (10 each)
+    s.run.skills = ['read-the-page']; // gated ONLY on Read the Page now (v0.1.2)
+    s.run.resources.insight = 1000; // plenty to afford 6 scribes (3 each)
+    s.run.vitals.stamina.max = 100; // headroom: each scribe costs 1 Stamina
+    s.run.vitals.stamina.cur = 100;
 
     for (let i = 0; i < 5; i++) doTask(s, 'scribe-scroll');
     expect(s.run.tasks['scribe-scroll'].count).toBe(5);
-    expect(s.run.resources.spiritDust).toBeCloseTo(5, 6); // first 5 are base output (1 each)
+    expect(s.run.resources.scroll).toBeCloseTo(5, 6); // first 5 are base output (1 each)
 
     doTask(s, 'scribe-scroll'); // 6th completion is boosted: +1
-    expect(s.run.resources.spiritDust).toBeCloseTo(7, 6); // 5 + 2
-    expect(s.run.resources.insight).toBeCloseTo(940, 6); // 6 × 10 spent
+    expect(s.run.resources.scroll).toBeCloseTo(7, 6); // 5 + 2
+    expect(s.run.resources.insight).toBeCloseTo(982, 6); // 6 × 3 spent
   });
 });
 
@@ -168,7 +169,7 @@ describe('timed completion epsilon (playtest fix)', () => {
     expect(s.run.tasks['grand-library'].count).toBe(1);
     expect(s.run.tasks['grand-library'].active).toBe(false); // slot freed on completion
     expect(slotsUsed(s)).toBe(0);
-    expect(s.run.caps.insight).toBe(250); // 100 → 250 effect applied
+    expect(s.run.caps.insight).toBe(155); // 5 → 155 effect applied (base 5 + 150)
   });
 
   it('the exact-duration completion is identical via offline catch-up (advanceFixed path)', () => {
@@ -179,7 +180,7 @@ describe('timed completion epsilon (playtest fix)', () => {
     s.lastSaved = Date.now() - 8000; // exactly 8s away
     applyOffline(s, Date.now());
     expect(s.run.tasks['grand-library'].count).toBe(1);
-    expect(s.run.caps.insight).toBe(250);
+    expect(s.run.caps.insight).toBe(155);
   });
 
   it('a perpetual + running mix still behaves across the fix', () => {
@@ -222,12 +223,16 @@ describe('limited start-cost rate (display fix)', () => {
 describe('card reveal (display-only)', () => {
   it('a far-locked task is hidden; a one-away task is revealed', () => {
     const s = newGame(1);
-    // Scribe Scroll needs BOTH Read the Page AND the lair — 2 unmet reqs at the
+    // Cleanse the Old Well needs BOTH Spark AND Renown ≥ 6 — 2 unmet reqs at the
     // Origin → far-locked → hidden.
-    expect(taskInfo(s, TASK_BY_ID['scribe-scroll']).revealed).toBe(false);
+    expect(taskInfo(s, TASK_BY_ID['cleanse-the-old-well']).revealed).toBe(false);
 
-    // Satisfy one of the two → now exactly one requirement away → revealed.
-    s.run.flags.lairFounded = true;
+    // Satisfy one of the two (Renown) → now exactly one requirement away → revealed.
+    s.run.resources.renown = 6;
+    expect(taskInfo(s, TASK_BY_ID['cleanse-the-old-well']).revealed).toBe(true);
+
+    // Scribe Scroll has ONE requirement now (Read the Page) → one-away → revealed
+    // even at the Origin (v0.1.2).
     expect(taskInfo(s, TASK_BY_ID['scribe-scroll']).revealed).toBe(true);
 
     // find-work has ONE requirement (clean-stables ×20) → one-away → revealed even
@@ -247,18 +252,58 @@ describe('card reveal (display-only)', () => {
   });
 });
 
-describe('Home items: Gold cap', () => {
-  it('equipping a Coin Pouch raises the effective Gold cap and the tick clamps to it', () => {
+describe('Storage upgrades: Coin Pouch (gold cap) & Notebook (insight cap)', () => {
+  it('building a Coin Pouch raises the Gold cap 25 → 50, and the tick clamps to it', () => {
     const s = newGame(1);
-    expect(effectiveCap(s, 'gold')).toBe(50); // base cap
-    s.run.resources.gold = 30;
-    expect(buyItem(s, 'coin-pouch')).toBe(true);
-    expect(equipItem(s, 'coin-pouch')).toBe(true);
-    expect(effectiveCap(s, 'gold')).toBe(100); // 50 + 50
+    expect(effectiveCap(s, 'gold')).toBe(25); // base cap (v0.1.2)
+    s.run.resources.gold = 100; // fund the build (direct; not yet clamped by a tick)
+    expect(startTask(s, 'coin-pouch')).toBe(true); // Limited, length 3, pays Gold 20
+    expect(slotsUsed(s)).toBe(1);
+
+    simulate(s, 4); // completes the 3s build
+    expect(s.run.tasks['coin-pouch'].count).toBe(1);
+    expect(s.run.caps.gold).toBe(50); // 25 + 25
+    expect(slotsUsed(s)).toBe(0); // slot freed on completion
 
     s.run.resources.gold = 200; // over the new cap
     step(s, 0.1);
-    expect(s.run.resources.gold).toBe(100); // clamped to the effective cap (excess lost)
+    expect(s.run.resources.gold).toBe(50); // clamped to the raised cap (excess lost)
+  });
+
+  it('building a Notebook raises the Insight cap 5 → 10', () => {
+    const s = newGame(1);
+    expect(s.run.caps.insight).toBe(5); // base cap (v0.1.2)
+    s.run.resources.gold = 100;
+    expect(startTask(s, 'notebook')).toBe(true); // pays Gold 20, length 3
+    simulate(s, 4);
+    expect(s.run.caps.insight).toBe(10); // 5 + 5
+  });
+
+  it('Coin Pouch is Limited to 3 builds → Gold cap 25 → 100, then locks (maxed)', () => {
+    const s = newGame(1);
+    for (let i = 0; i < 3; i++) {
+      s.run.resources.gold = 100; // fund each build (and dodge the cap clamp between builds)
+      expect(startTask(s, 'coin-pouch')).toBe(true);
+      simulate(s, 4);
+    }
+    expect(s.run.caps.gold).toBe(100); // 25 + 25 × 3
+    s.run.resources.gold = 100;
+    expect(startTask(s, 'coin-pouch')).toBe(false); // Max 3 reached → locked
+  });
+});
+
+describe('Scrolls: scribe-scroll crafting (v0.1.2)', () => {
+  it('is gated on Read the Page and crafts a Scroll from Insight + Stamina', () => {
+    const s = newGame(1);
+    // No lair gate anymore — but it needs the Read the Page cantrip.
+    expect(doTask(s, 'scribe-scroll')).toBe(false); // no cantrip yet
+    s.run.skills = ['read-the-page'];
+    s.run.resources.insight = 5; // costs Insight 3 + Stamina 1
+
+    expect(doTask(s, 'scribe-scroll')).toBe(true);
+    expect(s.run.resources.scroll).toBe(1);
+    expect(s.run.resources.insight).toBeCloseTo(2, 6); // 5 − 3
+    expect(s.run.vitals.stamina.cur).toBeCloseTo(4, 6); // 5 − 1
   });
 });
 
@@ -301,6 +346,7 @@ describe('learnable Mana (Inner Wellspring)', () => {
     const s = newGame(1);
     expect(s.run.vitals.mana.max).toBe(0); // locked at the start
     s.run.resources.insight = 100;
+    s.run.resources.scroll = 1; // Inner Wellspring costs a Scroll (v0.1.2)
     expect(learnCantrip(s, 'read-the-page')).toBe(true);
     expect(learnCantrip(s, 'inner-wellspring')).toBe(true);
     expect(s.run.vitals.mana.max).toBe(10);

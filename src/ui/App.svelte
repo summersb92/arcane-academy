@@ -8,14 +8,16 @@
   import Main from './panels/Main.svelte';
   import System from './panels/System.svelte';
   import OfflinePanel from './components/OfflinePanel.svelte';
+  import CharacterCreation from './components/CharacterCreation.svelte';
+  import Tooltip from './components/Tooltip.svelte';
 
   // Resizable side columns. Widths live in CSS vars on .body (with the app.css
   // defaults as fallback) and persist to localStorage so a reload keeps them.
   const LKEY = 'aa-left-w';
   const RKEY = 'aa-right-w';
-  const LMIN = 150, LMAX = 460, RMIN = 160, RMAX = 520;
-  let leftW = 210;
-  let rightW = 236;
+  const LMIN = 150, LMAX = 460, RMIN = 160, RMAX = 560;
+  let leftW = 240;
+  let rightW = 320;
 
   const clamp = (v: number, min: number, max: number): number => Math.max(min, Math.min(max, v));
 
@@ -112,3 +114,11 @@
 <!-- Overlays: shown on load after an idle gap / opened from the header. -->
 <OfflinePanel />
 <System />
+
+<!-- Character creation: a blocking modal shown whenever the mage has no name yet
+     (fresh game / hard reset / old save). Renders above the other overlays. -->
+<CharacterCreation />
+
+<!-- The single global hover tooltip — rendered outside the scrolling columns so it is
+     never clipped (v0.1.1). Driven by the `tooltip` store; cards/rows set its content. -->
+<Tooltip />

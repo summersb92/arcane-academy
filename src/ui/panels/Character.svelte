@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { game } from '../stores';
+  import { game, openTip, hideTooltip, vitalTooltip, essenceTooltip } from '../stores';
   import { fmt, fmtRate } from '../format';
 
   function pct(cur: number, max: number): number {
@@ -10,35 +10,39 @@
 <div class="char">
   <h2>Character</h2>
 
-  <div class="row">
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <div class="row" on:mouseenter={(e) => openTip(e, vitalTooltip('life', '✚ Life', 'life'))} on:mouseleave={hideTooltip}>
     <span class="nm life">✚ Life</span>
     <span>
       <span class="vl">{fmt($game.vitals.life.cur)} / {fmt($game.vitals.life.max)}</span>
-      <span class="rt reg" title="Life recovers {fmt($game.vitals.life.regen)}/s toward its max">{fmtRate($game.vitals.life.regen)}</span>
+      <span class="rt reg">{fmtRate($game.vitals.life.regen)}</span>
     </span>
   </div>
   <div class="mtr"><i style="width:{pct($game.vitals.life.cur, $game.vitals.life.max)}%;background:var(--life)"></i></div>
 
-  <div class="row">
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <div class="row" on:mouseenter={(e) => openTip(e, vitalTooltip('stamina', '⚡ Stamina', 'stam'))} on:mouseleave={hideTooltip}>
     <span class="nm stam">⚡ Stamina</span>
     <span>
       <span class="vl">{fmt($game.vitals.stamina.cur)} / {fmt($game.vitals.stamina.max)}</span>
-      <span class="rt reg" title="Stamina recovers {fmt($game.vitals.stamina.regen)}/s (raised by the Mend cantrip)">{fmtRate($game.vitals.stamina.regen)}</span>
+      <span class="rt reg">{fmtRate($game.vitals.stamina.regen)}</span>
     </span>
   </div>
   <div class="mtr"><i style="width:{pct($game.vitals.stamina.cur, $game.vitals.stamina.max)}%;background:var(--stam)"></i></div>
 
   {#if $game.vitals.mana.max > 0}
-    <div class="row">
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div class="row" on:mouseenter={(e) => openTip(e, vitalTooltip('mana', '✦ Mana', 'mana'))} on:mouseleave={hideTooltip}>
       <span class="nm mana">✦ Mana</span>
       <span>
         <span class="vl">{fmt($game.vitals.mana.cur)} / {fmt($game.vitals.mana.max)}</span>
-        <span class="rt reg" title="Mana recovers {fmt($game.vitals.mana.regen)}/s toward its max">{fmtRate($game.vitals.mana.regen)}</span>
+        <span class="rt reg">{fmtRate($game.vitals.mana.regen)}</span>
       </span>
     </div>
     <div class="mtr"><i style="width:{pct($game.vitals.mana.cur, $game.vitals.mana.max)}%;background:var(--mana)"></i></div>
   {:else}
-    <div class="row dimmed" title="Mana is sealed — learn the Inner Wellspring cantrip to open your wellspring">
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div class="row dimmed" on:mouseenter={(e) => openTip(e, vitalTooltip('mana', '✦ Mana', 'mana'))} on:mouseleave={hideTooltip}>
       <span class="nm mana">✦ Mana</span>
       <span><span class="vl">— locked</span></span>
     </div>
@@ -47,11 +51,17 @@
 
   <h2 class="mt">Essence</h2>
   {#each $game.essence as e (e.id)}
-    <div class="row ess" class:dimmed={!e.awakened} title={e.awakened ? '' : `${e.label} — not yet awakened (learn a cantrip)`}>
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div
+      class="row ess"
+      class:dimmed={!e.awakened}
+      on:mouseenter={(ev) => openTip(ev, essenceTooltip(e))}
+      on:mouseleave={hideTooltip}
+    >
       <span class="essnm {e.cls}"><span class="dot {e.cls}"></span>{e.glyph} {e.label}</span>
       <span>
         <span class="vl">{e.awakened ? fmt(e.amount) : '—'}</span>
-        <span class="rt" title={e.rateTip ?? ''}>{e.awakened ? fmtRate(e.rate) : ''}</span>
+        <span class="rt">{e.awakened ? fmtRate(e.rate) : ''}</span>
       </span>
     </div>
   {/each}
@@ -63,9 +73,9 @@
 <style>
   .reg {
     color: var(--faint);
-    cursor: help;
   }
-  .rt[title]:not([title='']) {
+  .row,
+  .row.ess {
     cursor: help;
   }
   /* Essence rows are colour-coded by element. The name span carries the element class

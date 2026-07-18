@@ -20,6 +20,7 @@ export const CONTRACTS: TaskDef[] = [
     type: 'running',
     tag: 'Contract',
     cls: 'renown',
+    blurb: 'Trace a Fire-ward across the beams so the farmer sleeps and the rats do not.',
     length: 12,
     repeatable: true,
     requires: [{ kind: 'skill', id: 'spark' }],
@@ -36,6 +37,7 @@ export const CONTRACTS: TaskDef[] = [
     type: 'running',
     tag: 'Contract',
     cls: 'renown',
+    blurb: 'Something foul festers in the dark water. Burn it out and the village remembers your name.',
     length: 20,
     repeatable: true,
     requires: [

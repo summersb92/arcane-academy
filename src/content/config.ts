@@ -32,12 +32,15 @@ export const LAIR = {
  * in-run as its own Housing task). The Site is the big Gold sink; the Charter needs
  * a name (Renown) behind it. Tuned toward the ~15–40 min target — balance freely.
  */
+// v0.1.2: costs must sit UNDER the reachable Gold ceiling. Max Gold cap = STARTING.goldCap
+// (25) + Coin Pouch (+25 × max 3) = 100, so the Site (the big sink) and the held-Gold
+// finale gate both live below 100 with headroom (never pinned exactly at the cap).
 export const FOUNDING = {
-  goldHeld: 100, // ⦿ you must still hold at the moment of Founding
+  goldHeld: 60, // ⦿ you must still hold at the moment of Founding (well under the 100 ceiling)
   renown: 25, // ★ the world must know your name
-  charterCost: 60, // ⦿ to secure a Guild Charter
+  charterCost: 40, // ⦿ to secure a Guild Charter
   charterRenown: 8, // ★ before a guild will charter you
-  siteCost: 120, // ⦿ to claim the Ruined Tower (the big Gold sink → your Grounds)
+  siteCost: 70, // ⦿ to claim the Ruined Tower (the big Gold sink → your Grounds; ≤ 100 cap)
 };
 
 export const STARTING = {
@@ -47,8 +50,9 @@ export const STARTING = {
   moonpetal: 0,
   ironOre: 0,
   spiritDust: 0,
-  goldCap: 50, // BASE Gold cap — raised by equipping Coin Pouch / Strongbox (effectiveCap)
-  insightCap: 100,
+  scroll: 0, // crafting currency (uncapped) — scribed from Insight, spent to learn cantrips (v0.1.2)
+  goldCap: 25, // BASE Gold cap (v0.1.2) — raised by building Coin Pouch upgrade tasks (max 100)
+  insightCap: 5, // BASE Insight cap (v0.1.2) — raised by building Notebook upgrade tasks (max 20)
   materialCap: 50, // BASE cap on each material (moonpetal / ironOre / spiritDust) — raised by Warded Chest
   activitySlots: 2, // continuous-task capacity at the Origin (raised to 3 by "Widen the Study")
   // Vitals rework (v0.1.1): tighter Life/Stamina, and Mana LOCKED (max 0 / regen 0)

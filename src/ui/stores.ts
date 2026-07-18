@@ -5,7 +5,8 @@
 
 import { writable } from 'svelte/store';
 import { createAccumulator } from '../engine/tick';
-import { newGame, type GameState, ELEMENTS, type ElementId, type ResourceId } from '../engine/state';
+import { newGame, type GameState, ELEMENTS, type ElementId, type ResourceId, type VitalId } from '../engine/state';
+import { breakdown, type Breakdown } from '../engine/systems/breakdown';
 import { AMOUNT_LABEL, TASKS, type Amount, type Requirement, type TaskDef, type TaskType } from '../content/tasks';
 import { CANTRIP_BY_ID } from '../content/cantrips';
 import { HOME_ITEMS, HOME_TIERS, HOME_TIER_BY_ID, type Modifier } from '../content/home';
@@ -23,13 +24,13 @@ import {
   type TaskInfo,
 } from '../engine/systems/tasks';
 import { learnCantrip as engineLearnCantrip, listCantripInfo, outputMult } from '../engine/systems/skills';
+import { setName as engineSetName } from '../engine/systems/player';
 import { essenceRates } from '../engine/systems/essence';
 import {
   homeTier,
   homeSlots,
   homeSlotsUsed,
   homeResourceRates,
-  homeRateContribs,
   effectiveCap,
   effectiveRegen,
   moveHome as engineMoveHome,
@@ -50,7 +51,6 @@ export interface ResourceView {
   rate: number;
   cap?: number;
   atCap?: boolean; // amount is at/over the cap → gains are wasted (dim the rate)
-  rateTip?: string; // sourced-number tooltip: "+0.61/s = Study 0.55 × Kindle ×1.10"
 }
 export interface VitalView {
   cur: number;
@@ -65,7 +65,6 @@ export interface EssenceView {
   amount: number;
   rate: number;
   awakened: boolean;
-  rateTip?: string; // sourced-number tooltip on the trickle rate
 }
 export interface TaskView {
   id: string;
@@ -95,6 +94,12 @@ export interface TaskView {
   count: number; // completions
   capMark?: string; // "*" when an Insight cost exceeds the Insight cap
   capNote?: string; // hover text for the `*` marker
+  // Hover-tooltip pieces (v0.1.1) — reuse existing formatters, split so the tooltip
+  // can show Time / Consumed / Output / flavour separately.
+  timeText: string; // = kind ("Instant", "Running · 15s", "Upgrade · 8s", …)
+  costText: string; // consumed: startCost / per-second runCost with glyphs ("" if none)
+  outputText: string; // produced resources/effects ("a random basic material" for Scavenge)
+  blurb?: string; // one-line flavour
 }
 export interface CantripView {
   id: string;
@@ -109,12 +114,20 @@ export interface CantripView {
   prereqNote?: string; // "needs: Read the Page" when locked on a prereq
   capMark?: string; // "*" when cost exceeds the Insight cap
   capNote?: string; // hover text for the `*` marker
+  scrollCost: number; // Scrolls 📜 required to learn (0 for the opener; v0.1.2)
+  hasScroll: boolean; // enough Scrolls on hand → false surfaces a "needs a Scroll" hint
 }
 export interface TabView {
   id: string;
   label: string;
   visible: boolean;
   locked: boolean;
+}
+export interface PlayerView {
+  name: string; // the mage's chosen name ('' → not yet named)
+  title: string; // earned honorific ('Waif' at the Origin)
+  renown: number; // ★ Renown (mirrored here; also stays in resources for now)
+  needsNaming: boolean; // true on a fresh game / post-reset / old save → prompt for a name
 }
 export interface ChronicleView {
   t: string;
@@ -145,6 +158,8 @@ export interface HomeTierView {
   reason?: string; // why locked (from-chain or unmet requirement)
   current: boolean; // this is where you live
   reachable: boolean; // from-chain + requirements met (afford handled by the action)
+  modsSummary: string; // human summary of the tier's innate modifiers ("" if none)
+  blurb: string; // flavour text for the hover tooltip
 }
 export interface HomeItemView {
   id: string;
@@ -156,6 +171,7 @@ export interface HomeItemView {
   locked: boolean; // requirement unmet (e.g. Mana Crystal needs Inner Wellspring)
   reason?: string; // why locked
   modsSummary: string; // human summary of the item's modifiers
+  blurb: string; // flavour text for the hover tooltip
 }
 export interface HomeView {
   tier: string; // current tier id
@@ -168,7 +184,8 @@ export interface HomeView {
 }
 export interface UiState {
   resources: { gold: ResourceView; insight: ResourceView; renown: ResourceView };
-  materials: { moonpetal: number; ironOre: number; spiritDust: number };
+  materials: { moonpetal: number; ironOre: number; spiritDust: number; scroll: number };
+  player: PlayerView;
   vitals: { life: VitalView; stamina: VitalView; mana: VitalView };
   essence: EssenceView[];
   tabs: TabView[];
@@ -178,6 +195,40 @@ export interface UiState {
   home: HomeView;
   founding: FoundingView;
   chronicle: ChronicleView[];
+}
+
+// ---- Tooltip system (v0.1.1): ONE reusable, styled, themed hover tooltip ----
+// Structured content the global tooltip element renders (Tooltip.svelte). Reused by
+// BOTH the task cards (Time / Consumed / Output / blurb) and the resource / vital /
+// essence breakdowns (Produces / Consumes / Multipliers / Net). Sections with no
+// lines are simply omitted by the builders below.
+export interface TooltipLine {
+  text: string;
+  cls?: string; // colour class: 'ok' (produce/output), 'life' (consume), else muted
+}
+export interface TooltipSection {
+  label: string;
+  lines: TooltipLine[];
+}
+export interface TooltipContent {
+  title: string;
+  titleCls?: string; // a CSS colour TOKEN name (used as var(--{titleCls})) — e.g. 'gold', 'fire', 'stam'
+  sections: TooltipSection[];
+  net?: TooltipLine; // footer "Net" line (breakdowns)
+  note?: string; // muted note (at cap / sealed)
+  blurb?: string; // muted italic flavour (task cards)
+  empty?: string; // shown when there are no sections (e.g. nothing producing this)
+}
+export interface TooltipAnchor {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+export interface TooltipState {
+  visible: boolean;
+  anchor: TooltipAnchor | null;
+  content: TooltipContent | null;
 }
 
 const ELEMENT_META: Record<ElementId, { label: string; glyph: string; cls: string }> = {
@@ -199,7 +250,7 @@ function mmss(seconds: number): string {
 // ---- task display helpers (glyphs + cost/output/payoff strings) ----
 const GLYPH: Record<string, string> = {
   gold: '⦿', insight: '◈', renown: '★',
-  moonpetal: '⚘', ironOre: '⛏', spiritDust: '✧',
+  moonpetal: '⚘', ironOre: '⛏', spiritDust: '✧', scroll: '📜',
   life: '✚', stamina: '⚡', mana: '✦',
   prism: '❖', fire: '▲', water: '▼', earth: '⬢', air: '≈', dark: '☾', light: '☀',
 };
@@ -232,19 +283,29 @@ function effectSummary(def: TaskDef): string {
     .map((e) => {
       if (e.kind === 'activitySlot') return `+${e.amount} Activity slot${e.amount === 1 ? '' : 's'}`;
       if (e.kind === 'raiseInsightCap') return `+${e.amount} ◈ cap`;
+      if (e.kind === 'raiseGoldCap') return `+${e.amount} ⦿ cap`;
       if (e.kind === 'flag') return `unlocks ${e.flag}`;
       return '';
     })
     .filter(Boolean)
     .join(', ');
 }
+/** Consumed side of a task: instant→startCost, perpetual→per-second runCost,
+ *  timed→startCost + per-second runCost. "" when the task costs nothing. */
+function costText(def: TaskDef): string {
+  if (def.type === 'instant') return tokens(def.startCost, false);
+  if (def.type === 'perpetual') return tokens(def.runCost, true);
+  return [tokens(def.startCost, false), tokens(def.runCost, true)].filter(Boolean).join(' + ');
+}
+/** Produced side of a task: output tokens (per-second for perpetual), the random-loot
+ *  phrasing for Scavenge, or an effect summary for upgrades/milestones. */
+function outputText(def: TaskDef): string {
+  if (def.randomOutput) return 'a random basic material';
+  return def.output && def.output.length ? tokens(def.output, def.type === 'perpetual') : effectSummary(def);
+}
 function costLine(def: TaskDef): string {
-  let cost: string;
-  if (def.type === 'instant') cost = tokens(def.startCost, false);
-  else if (def.type === 'perpetual') cost = tokens(def.runCost, true);
-  else cost = [tokens(def.startCost, false), tokens(def.runCost, true)].filter(Boolean).join(' + ');
-  const out = def.output && def.output.length ? tokens(def.output, def.type === 'perpetual') : effectSummary(def);
-  const left = cost || '—';
+  const left = costText(def) || '—';
+  const out = outputText(def);
   return out ? `${left} → ${out}` : left;
 }
 /** Founding (Home-tab) tasks have no `output` — their value is a milestone, so
@@ -323,6 +384,10 @@ function buildTaskView(state: GameState, def: TaskDef, info: TaskInfo): TaskView
     count: info.count,
     capMark: cap.capMark,
     capNote: cap.capNote,
+    timeText: chipText(def),
+    costText: costText(def),
+    outputText: outputText(def),
+    blurb: def.blurb,
   };
 }
 
@@ -381,7 +446,8 @@ function buildHomeView(state: GameState): HomeView {
         : firstUnmetReason(state, t.requires);
     }
     const cost = t.moveCost ? tokens(t.moveCost, false) : t.rent ? `${tokens(t.rent, true)} rent` : 'free';
-    return { id: t.id, name: t.name, slots: t.slots, cost, locked, reason, current, reachable };
+    const modsSummary = (t.innate ?? []).map(modLabel).join(' · ');
+    return { id: t.id, name: t.name, slots: t.slots, cost, locked, reason, current, reachable, modsSummary, blurb: t.blurb };
   });
   const items: HomeItemView[] = HOME_ITEMS.map((it) => {
     const owned = home.owned.includes(it.id);
@@ -397,6 +463,7 @@ function buildHomeView(state: GameState): HomeView {
       locked: !reqOk,
       reason: reqOk ? undefined : firstUnmetReason(state, it.requires),
       modsSummary: it.mods.map(modLabel).join(' · '),
+      blurb: it.blurb,
     };
   });
   return {
@@ -410,54 +477,100 @@ function buildHomeView(state: GameState): HomeView {
   };
 }
 
-/** Sourced-number tooltip for a left-panel resource rate: "+0.61/s = Study 0.55 × Kindle ×1.10". */
-function resourceRateTip(state: GameState, id: ResourceId, atCap: boolean): string {
-  const mult = outputMult(state);
-  const parts: { name: string; base: number }[] = [];
-  for (const def of TASKS) {
-    const rt = state.run.tasks[def.id];
-    if (!rt?.active || rt.paused) continue;
-    let base = 0;
-    if (def.type === 'perpetual') {
-      for (const o of def.output ?? []) if (o.id === id) base += o.amount;
-    } else if (def.type === 'running' || def.type === 'limited') {
-      const len = def.length && def.length > 0 ? def.length : 1;
-      for (const o of def.output ?? []) if (o.id === id) base += o.amount / len;
-    }
-    if (base > 0) parts.push({ name: def.name, base });
-  }
-  // Home producers (Focusing Lens / Mentor's Loft insight, Homestead ore/moonpetal) also
-  // feed the shown rate (totalRate = taskRate + homeRate × mult), so list them here too.
-  for (const c of homeRateContribs(state)) {
-    if (c.target === id && c.amount > 0) parts.push({ name: c.name, base: c.amount });
-  }
-  if (!parts.length) return '';
-  const base = parts.reduce((s, p) => s + p.base, 0);
-  const src = parts.map((p) => `${p.name} ${numStr(p.base)}`).join(' + ');
-  const multStr = mult !== 1 ? ` × Kindle ×${mult.toFixed(2)}` : '';
-  const capStr = atCap ? ' — at cap, no gain' : '';
-  return `+${numStr(base * mult)}/s = ${src}${multStr}${capStr}`;
+// ---- the reusable tooltip store + content builders (v0.1.1) ----
+/** The single global tooltip's state; App.svelte renders Tooltip.svelte from it. */
+export const tooltip = writable<TooltipState>({ visible: false, anchor: null, content: null });
+
+/** Show the tooltip anchored to a card/row's bounding rect (Tooltip.svelte clamps to viewport). */
+export function showTooltip(content: TooltipContent, anchor: TooltipAnchor): void {
+  tooltip.set({ visible: true, anchor, content });
+}
+/** Hide the tooltip (mouseleave / blur / click). */
+export function hideTooltip(): void {
+  tooltip.update((t) => ({ ...t, visible: false }));
 }
 
-/** Sourced-number tooltip for an essence trickle rate. */
-function essenceRateTip(state: GameState, id: ElementId): string {
-  const mult = outputMult(state);
-  const parts: { name: string; base: number }[] = [];
-  for (const sid of state.run.skills ?? []) {
-    const def = CANTRIP_BY_ID[sid];
-    if (!def) continue;
-    for (const e of def.effects) if (e.kind === 'awaken' && e.element === id) parts.push({ name: def.name, base: e.trickle });
+/** Show `content` anchored to the event target's bounding rect. The single hover/focus
+ *  entry point cards & rows call — keeps the wiring in each panel to one line. */
+export function openTip(e: Event, content: TooltipContent): void {
+  const el = e.currentTarget as HTMLElement | null;
+  if (!el || typeof el.getBoundingClientRect !== 'function') return;
+  const r = el.getBoundingClientRect();
+  showTooltip(content, { left: r.left, top: r.top, right: r.right, bottom: r.bottom });
+}
+
+const EPS = 1e-9;
+function signedRate(x: number): string {
+  return `${signStr(x)}${numStr(Math.abs(x))}/s`;
+}
+
+/** Build the styled tooltip content for a task card: Time / Consumed / Output / blurb. */
+export function taskTooltip(t: TaskView): TooltipContent {
+  const sections: TooltipSection[] = [{ label: 'Time', lines: [{ text: t.timeText }] }];
+  if (t.costText) sections.push({ label: 'Consumed', lines: [{ text: t.costText, cls: 'life' }] });
+  if (t.outputText) sections.push({ label: 'Output', lines: [{ text: t.outputText, cls: 'ok' }] });
+  return { title: t.name, titleCls: t.cls, sections, blurb: t.blurb };
+}
+
+/** Tooltip for a Home housing-tier card: slots, cost, innate bonus, blurb. */
+export function homeTierTooltip(t: HomeTierView): TooltipContent {
+  const sections: TooltipSection[] = [
+    { label: 'Slots', lines: [{ text: `${t.slots}` }] },
+    { label: 'Cost', lines: [{ text: t.cost }] },
+  ];
+  if (t.modsSummary) sections.push({ label: 'Bonus', lines: [{ text: t.modsSummary, cls: 'ok' }] });
+  return { title: t.name, sections, blurb: t.blurb };
+}
+
+/** Tooltip for a Home item card: cost, what the modifier does, blurb. */
+export function homeItemTooltip(it: HomeItemView): TooltipContent {
+  const sections: TooltipSection[] = [];
+  if (!it.owned) sections.push({ label: 'Cost', lines: [{ text: it.cost }] });
+  if (it.modsSummary) sections.push({ label: 'Effect', lines: [{ text: it.modsSummary, cls: 'ok' }] });
+  return { title: it.name, sections, blurb: it.blurb };
+}
+
+/** Format a computed Breakdown into styled tooltip content (Produces / Consumes /
+ *  Multipliers / Net + at-cap / sealed notes). Empty sections are dropped. */
+function breakdownTooltip(title: string, titleCls: string | undefined, b: Breakdown): TooltipContent {
+  const sections: TooltipSection[] = [];
+  if (b.produces.length) {
+    sections.push({ label: 'Produces', lines: b.produces.map((p) => ({ text: `${p.name}  +${numStr(p.amount)}/s`, cls: 'ok' })) });
   }
-  // Home essence producers (Hearth Stone → Fire, Wayfarer Tent → Air) trickle too — list
-  // them so the essence breakdown reconciles with the shown rate.
-  for (const c of homeRateContribs(state)) {
-    if (c.target === id && c.amount > 0) parts.push({ name: c.name, base: c.amount });
+  if (b.consumes.length) {
+    sections.push({ label: 'Consumes', lines: b.consumes.map((c) => ({ text: `${c.name}  −${numStr(c.amount)}/s`, cls: 'life' })) });
   }
-  if (!parts.length) return '';
-  const base = parts.reduce((s, p) => s + p.base, 0);
-  const src = parts.map((p) => `${p.name} ${numStr(p.base)}`).join(' + ');
-  const multStr = mult !== 1 ? ` × Kindle ×${mult.toFixed(2)}` : '';
-  return `+${numStr(base * mult)}/s = ${src}${multStr}`;
+  if (b.multipliers.length) {
+    sections.push({ label: 'Multipliers', lines: b.multipliers.map((m) => ({ text: `${m.name}  ×${m.factor.toFixed(2)}` })) });
+  }
+  let note: string | undefined;
+  if (b.locked) note = 'Sealed — learn Inner Wellspring to open your Mana.';
+  else if (b.atCap) note = 'At cap — further gains are wasted.';
+  const empty = sections.length || b.locked ? undefined : 'Nothing is producing or consuming this right now.';
+  // Net is meaningful only when something contributes — omit it for a sealed or empty target.
+  const net: TooltipLine | undefined =
+    b.locked || empty ? undefined : { text: signedRate(b.net), cls: b.net > EPS ? 'ok' : b.net < -EPS ? 'life' : undefined };
+  return { title, titleCls, sections, net, note, empty };
+}
+
+/** Resource / material breakdown tooltip (id → producers, consumers, multipliers, net). */
+export function resourceTooltip(id: ResourceId, title: string): TooltipContent {
+  const MATERIAL: ResourceId[] = ['moonpetal', 'ironOre', 'spiritDust', 'scroll'];
+  const token = MATERIAL.includes(id) ? undefined : id; // materials have no colour token
+  return breakdownTooltip(title, token, breakdown(getState(), { kind: 'resource', id }));
+}
+/** Vital breakdown tooltip (regen sources, task drains, net regen). `token` is the CSS colour token. */
+export function vitalTooltip(id: VitalId, title: string, token: string): TooltipContent {
+  return breakdownTooltip(title, token, breakdown(getState(), { kind: 'vital', id }));
+}
+/** Essence breakdown tooltip (cantrip/home trickles, contract burns, Kindle, net). */
+export function essenceTooltip(e: EssenceView): TooltipContent {
+  const title = `${e.glyph} ${e.label}`;
+  const token = e.id; // element ids double as colour tokens (--fire, --water, …)
+  if (!e.awakened) {
+    return { title, titleCls: token, sections: [], empty: 'Not yet awakened — learn a cantrip to open this essence.' };
+  }
+  return breakdownTooltip(title, token, breakdown(getState(), { kind: 'essence', id: e.id as ElementId }));
 }
 
 /** Map an engine CantripInfo → the panel's CantripView (adds glyphs, formatting, cap marker). */
@@ -481,6 +594,8 @@ function buildCantripView(info: ReturnType<typeof listCantripInfo>[number]): Can
     prereqNote,
     capMark: info.exceedsCap ? '*' : undefined,
     capNote: info.exceedsCap ? `exceeds Insight Max${raiser ? ` — build ${raiser} to raise it` : ''}` : undefined,
+    scrollCost: info.scrollCost,
+    hasScroll: info.hasScroll,
   };
 }
 
@@ -506,18 +621,22 @@ export function toView(state: GameState): UiState {
         rate: goldAtCap ? 0 : totalRate('gold'),
         cap: goldCap,
         atCap: goldAtCap,
-        rateTip: resourceRateTip(state, 'gold', goldAtCap),
       },
       insight: {
         amount: r.insight,
         rate: insightAtCap ? 0 : totalRate('insight'),
         cap: insightCap,
         atCap: insightAtCap,
-        rateTip: resourceRateTip(state, 'insight', insightAtCap),
       },
-      renown: { amount: r.renown, rate: rates.resources.renown ?? 0, rateTip: resourceRateTip(state, 'renown', false) },
+      renown: { amount: r.renown, rate: rates.resources.renown ?? 0 },
     },
-    materials: { moonpetal: r.moonpetal, ironOre: r.ironOre, spiritDust: r.spiritDust },
+    materials: { moonpetal: r.moonpetal, ironOre: r.ironOre, spiritDust: r.spiritDust, scroll: r.scroll },
+    player: {
+      name: state.run.name ?? '',
+      title: state.run.title ?? 'Waif',
+      renown: r.renown,
+      needsNaming: (state.run.name ?? '') === '',
+    },
     vitals: {
       // regen is the EFFECTIVE rate the tick applies (base + equipped-item `rate` mods),
       // so Herbalist Kit / Charm of Vigor / Mana Crystal visibly move the "recovers X/s".
@@ -539,11 +658,12 @@ export function toView(state: GameState): UiState {
         amount: e.amount,
         rate,
         awakened: e.awakened,
-        rateTip: e.awakened ? essenceRateTip(state, id) : undefined,
       };
     }),
     tabs: [
       { id: 'main', label: 'Main', visible: true, locked: false },
+      // The Player tab (character sheet — name/title/renown). Always visible (v0.1.2).
+      { id: 'player', label: 'Player', visible: true, locked: false },
       // The spark reveals Skills (the `awakened` flag is the canonical trigger — T-005).
       { id: 'skills', label: 'Skills', visible: state.run.flags.awakened === true, locked: false },
       // The lair beat reveals Home (fixtures + the Founding card).
@@ -659,6 +779,15 @@ export function setFontSetting(f: string): void {
   state.settings.font = f;
   persist();
   publish();
+}
+
+/** Name the mage (character creation): trims + clamps via the engine, then persists +
+ *  re-renders. A blank name is ignored (no mutation). Clears the needsNaming trigger. */
+export function setNameSetting(name: string): void {
+  if (engineSetName(state, name)) {
+    persist();
+    publish();
+  }
 }
 
 // ---- Home actions (housing tier + items) — call the engine, then publish ----

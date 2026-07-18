@@ -74,8 +74,9 @@ function applyCantripEffect(state: GameState, e: Cantrip['effects'][number]): vo
 }
 
 /**
- * Learn a cantrip: DAG prereqs met, not already owned, and enough Insight (which by
- * definition fits under the cap). Spends the Insight, records the id, applies effects.
+ * Learn a cantrip: DAG prereqs met, not already owned, enough Insight (which by
+ * definition fits under the cap), AND enough Scrolls (every cantrip past the free
+ * opener costs 1 — v0.1.2). Spends both, records the id, applies effects.
  * Returns false (no mutation) if refused.
  */
 export function learnCantrip(state: GameState, id: string): boolean {
@@ -84,8 +85,11 @@ export function learnCantrip(state: GameState, id: string): boolean {
   if (isLearned(state, id)) return false;
   if (!prereqsMet(state, def)) return false;
   if (state.run.resources.insight < def.cost - EPS) return false;
+  const scrollCost = def.scrollCost ?? 0;
+  if ((state.run.resources.scroll ?? 0) < scrollCost - EPS) return false;
 
   state.run.resources.insight -= def.cost;
+  if (scrollCost) state.run.resources.scroll -= scrollCost;
   if (!state.run.skills) state.run.skills = [];
   state.run.skills.push(id);
   for (const e of def.effects) applyCantripEffect(state, e);
@@ -101,9 +105,11 @@ export interface CantripInfo {
   name: string;
   blurb: string;
   cost: number;
+  scrollCost: number; // Scrolls 📜 required to learn (0 for the opener; v0.1.2)
+  hasScroll: boolean; // enough Scrolls on hand right now (for the "needs a Scroll" hint)
   requires: string[];
   status: CantripStatus;
-  affordable: boolean; // Insight ≥ cost right now
+  affordable: boolean; // Insight ≥ cost AND enough Scrolls right now
   exceedsCap: boolean; // cost > Insight cap → wears the `*` marker
   missingPrereqs: string[]; // unmet prereq ids (names resolved by the UI)
   awakensElement?: ElementId; // set when an effect awakens an essence
@@ -139,14 +145,19 @@ export function cantripInfo(state: GameState, def: Cantrip): CantripInfo {
   const awakensElement = def.effects.find((e) => e.kind === 'awaken') as
     | { kind: 'awaken'; element: ElementId; trickle: number }
     | undefined;
+  const scrollCost = def.scrollCost ?? 0;
+  const hasScroll = (state.run.resources.scroll ?? 0) >= scrollCost - EPS;
+  const insightEnough = state.run.resources.insight >= def.cost - EPS;
   return {
     id: def.id,
     name: def.name,
     blurb: def.blurb,
     cost: def.cost,
+    scrollCost,
+    hasScroll,
     requires: def.requires,
     status,
-    affordable: state.run.resources.insight >= def.cost - EPS,
+    affordable: insightEnough && hasScroll,
     exceedsCap: exceedsCap(state, def),
     missingPrereqs,
     awakensElement: awakensElement?.element,
