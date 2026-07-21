@@ -19,6 +19,30 @@ import { dominantAffinity } from './player';
 
 const EPS = 1e-9;
 
+/** The six elemental essences an opener can awaken (Prismatic is excluded — it is the
+ *  generic essence Spark provides, and does NOT count toward the opener cost scaling). */
+const OPENER_ELEMENTS: ElementId[] = ['fire', 'water', 'earth', 'air', 'light', 'dark'];
+
+/** How many of the six elemental essences are already awakened (excludes ❖ Prismatic).
+ *  Drives the dynamic opener cost + the "reveal the rest after your first awakening" gate. */
+export function awakenedElementCount(state: GameState): number {
+  let n = 0;
+  for (const el of OPENER_ELEMENTS) if (state.run.essence[el]?.awakened) n++;
+  return n;
+}
+
+/** The effective Insight cost of the NEXT elemental opener (v0.1.7): base 40 × 1.6ⁿ, where
+ *  n is the number of elements already awakened. 40 → 64 → 102 → 164 → 262 → 419. */
+export function openerCost(state: GameState): number {
+  return Math.round(40 * Math.pow(1.6, awakenedElementCount(state)));
+}
+
+/** The Insight cost actually charged/displayed for a cantrip: an elementOpener's cost is the
+ *  dynamic openerCost (which climbs as you open more elements); everything else is its static cost. */
+export function effectiveCost(state: GameState, def: Cantrip): number {
+  return def.elementOpener ? openerCost(state) : def.cost;
+}
+
 /** Is this cantrip already owned? */
 export function isLearned(state: GameState, id: string): boolean {
   return (state.run.skills ?? []).includes(id);
@@ -29,10 +53,19 @@ function prereqsMet(state: GameState, def: Cantrip): boolean {
   return def.requires.every((r) => isLearned(state, r));
 }
 
+/** Has this elemental opener been "unveiled" yet? After Spark, only the DOMINANT-affinity
+ *  opener is offered; the other five surface once you've awakened at least one element. */
+function openerRevealed(state: GameState, def: Cantrip): boolean {
+  const fixed = def.effects.find((e) => e.kind === 'awaken') as { element: ElementId } | undefined;
+  if (!fixed) return true;
+  return fixed.element === dominantAffinity(state) || awakenedElementCount(state) >= 1;
+}
+
 /** The cost sits above the current Insight cap → it can never be afforded until the cap rises.
- *  Reads the EFFECTIVE cap (base + any item `max` mods) — the single source of truth. */
+ *  Reads the EFFECTIVE cap (base + any item `max` mods) — the single source of truth, and the
+ *  EFFECTIVE cost (dynamic for elemental openers), so a 40+ opener wears the `*` under the cap. */
 export function exceedsCap(state: GameState, def: Cantrip): boolean {
-  return def.cost > effectiveCap(state, 'insight') + EPS;
+  return effectiveCost(state, def) > effectiveCap(state, 'insight') + EPS;
 }
 
 /** Global output multiplier: 1 + Σ(owned outputMult cantrips). Applied to task output AND essence trickle. */
@@ -52,17 +85,6 @@ function applyCantripEffect(state: GameState, e: Cantrip['effects'][number]): vo
       const ess = state.run.essence[e.element];
       if (ess) ess.awakened = true;
       logEvent(state, `${AMOUNT_LABEL[e.element] ?? e.element} essence awakens — it begins to trickle.`, 'ev');
-      break;
-    }
-    case 'awakenAffinity': {
-      // Awaken the DOMINANT affinity element (v0.1.4). Set run.affinityElement once — it
-      // then resolves the 'affinity' essence sentinel in contract costs. Defaults to Fire
-      // when no element work has been done (dominantAffinity all-zero → 'fire').
-      const el = dominantAffinity(state);
-      const ess = state.run.essence[el];
-      if (ess) ess.awakened = true;
-      if (state.run.affinityElement == null) state.run.affinityElement = el;
-      logEvent(state, `${AMOUNT_LABEL[el] ?? el} essence awakens — it begins to trickle.`, 'ev');
       break;
     }
     case 'vitalRegen':
@@ -96,15 +118,27 @@ export function learnCantrip(state: GameState, id: string): boolean {
   if (!def) return false;
   if (isLearned(state, id)) return false;
   if (!prereqsMet(state, def)) return false;
-  if (state.run.resources.insight < def.cost - EPS) return false;
+  // An elemental opener is unlearnable until it has been unveiled (dominant first, the
+  // rest after your first awakening) — the same gate cantripInfo reports as 'locked'.
+  if (def.elementOpener && !openerRevealed(state, def)) return false;
+  // Charge the EFFECTIVE cost (dynamic for elemental openers) — computed BEFORE effects
+  // apply, so this opener pays for the count of elements awakened up to now.
+  const cost = effectiveCost(state, def);
+  if (state.run.resources.insight < cost - EPS) return false;
   const scrollCost = def.scrollCost ?? 0;
   if ((state.run.resources.scroll ?? 0) < scrollCost - EPS) return false;
 
-  state.run.resources.insight -= def.cost;
+  state.run.resources.insight -= cost;
   if (scrollCost) state.run.resources.scroll -= scrollCost;
   if (!state.run.skills) state.run.skills = [];
   state.run.skills.push(id);
   for (const e of def.effects) applyCantripEffect(state, e);
+  // Learning an opener locks the contract 'affinity' essence to your FIRST-awakened
+  // element (until then, contracts resolve the sentinel to ❖ Prismatic from Spark).
+  if (def.elementOpener && state.run.affinityElement == null) {
+    const fixed = def.effects.find((e) => e.kind === 'awaken') as { element: ElementId } | undefined;
+    if (fixed) state.run.affinityElement = fixed.element;
+  }
   logEvent(state, `Learned cantrip: ${def.name}.`, 'ev');
   return true;
 }
@@ -124,23 +158,17 @@ export interface CantripInfo {
   affordable: boolean; // Insight ≥ cost AND enough Scrolls right now
   exceedsCap: boolean; // cost > Insight cap → wears the `*` marker
   missingPrereqs: string[]; // unmet prereq ids (names resolved by the UI)
+  prereqNote?: string; // engine-side lock note that ISN'T a missing prereq (e.g. an un-unveiled opener)
   awakensElement?: ElementId; // set when an effect awakens an essence
   effectText: string; // engine-side human summary ("awakens Fire essence (+0.2/s)")
 }
 
-function effectText(state: GameState, def: Cantrip): string {
+function effectText(_state: GameState, def: Cantrip): string {
   const parts = def.effects
     .map((e) => {
       switch (e.kind) {
         case 'awaken':
           return `awakens ${AMOUNT_LABEL[e.element] ?? e.element} essence (+${e.trickle}/s)`;
-        case 'awakenAffinity': {
-          // Once awakened the element is LOCKED (affinityElement); before that, preview the
-          // current dominant affinity. So an owned Spark card keeps naming the element it
-          // actually opened even if the player later grinds a different element.
-          const el = state.run.affinityElement ?? dominantAffinity(state);
-          return `awakens ${AMOUNT_LABEL[el] ?? 'your'} essence (+${e.trickle}/s)`;
-        }
         case 'vitalRegen':
           return `+${e.amount} ${AMOUNT_LABEL[e.vital] ?? e.vital} regen`;
         case 'unlockVital':
@@ -150,7 +178,8 @@ function effectText(state: GameState, def: Cantrip): string {
         case 'openTree':
           return 'opens the cantrip web';
         case 'flag':
-          return `unlocks ${e.flag}`;
+          // v0.1.7: Spark's affinityRevealed flag reads as its narrative payload.
+          return e.flag === 'affinityRevealed' ? 'reveals your affinity' : `unlocks ${e.flag}`;
       }
     })
     .filter(Boolean);
@@ -160,27 +189,33 @@ function effectText(state: GameState, def: Cantrip): string {
 export function cantripInfo(state: GameState, def: Cantrip): CantripInfo {
   const owned = isLearned(state, def.id);
   const missingPrereqs = def.requires.filter((r) => !isLearned(state, r));
-  const status: CantripStatus = owned ? 'owned' : missingPrereqs.length ? 'locked' : 'available';
-  // The element a card advertises: a fixed `awaken` names it directly; an `awakenAffinity`
-  // resolves to the current dominant affinity (Fire by default) so the card colours/labels
-  // track the element the spark will actually open.
+  // An elemental opener is 'locked' until it has been unveiled (prereqs met AND its element
+  // is your dominant affinity OR you've already awakened one element), even with Spark owned.
+  const unveiled = def.elementOpener ? openerRevealed(state, def) : true;
+  const status: CantripStatus = owned
+    ? 'owned'
+    : missingPrereqs.length || !unveiled
+      ? 'locked'
+      : 'available';
+  // A not-yet-unveiled opener has no MISSING prereq (Spark is owned) — give it its own note.
+  const prereqNote =
+    def.elementOpener && !owned && !missingPrereqs.length && !unveiled
+      ? "your affinity hasn't surfaced this yet"
+      : undefined;
+  // The element a card advertises comes straight from its fixed `awaken` effect (Spark → ❖ Prism).
   const fixedAwaken = def.effects.find((e) => e.kind === 'awaken') as
     | { kind: 'awaken'; element: ElementId; trickle: number }
     | undefined;
-  const hasAffinityAwaken = def.effects.some((e) => e.kind === 'awakenAffinity');
-  const awakensElement: ElementId | undefined = fixedAwaken
-    ? fixedAwaken.element
-    : hasAffinityAwaken
-      ? (state.run.affinityElement ?? dominantAffinity(state))
-      : undefined;
+  const awakensElement: ElementId | undefined = fixedAwaken?.element;
   const scrollCost = def.scrollCost ?? 0;
   const hasScroll = (state.run.resources.scroll ?? 0) >= scrollCost - EPS;
-  const insightEnough = state.run.resources.insight >= def.cost - EPS;
+  const cost = effectiveCost(state, def);
+  const insightEnough = state.run.resources.insight >= cost - EPS;
   return {
     id: def.id,
     name: def.name,
     blurb: def.blurb,
-    cost: def.cost,
+    cost,
     scrollCost,
     hasScroll,
     requires: def.requires,
@@ -188,6 +223,7 @@ export function cantripInfo(state: GameState, def: Cantrip): CantripInfo {
     affordable: insightEnough && hasScroll,
     exceedsCap: exceedsCap(state, def),
     missingPrereqs,
+    prereqNote,
     awakensElement,
     effectText: effectText(state, def),
   };

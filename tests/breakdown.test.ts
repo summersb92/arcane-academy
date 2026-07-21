@@ -89,14 +89,14 @@ describe('vital breakdown', () => {
 describe('essence breakdown', () => {
   it('lists a cantrip trickle as a producer and a running contract as a consumer', () => {
     const s = newGame(1);
-    s.run.skills = ['read-the-page', 'spark']; // Spark → Fire trickle 0.2/s
-    s.run.essence.fire.awakened = true;
-    s.run.essence.fire.amount = 100; // fuel the contract's Fire drain
+    s.run.skills = ['read-the-page', 'spark']; // v0.1.7: Spark → ❖ Prismatic trickle 0.2/s
+    s.run.essence.prism.awakened = true;
+    s.run.essence.prism.amount = 100; // fuel the contract's Prismatic drain (affinity → prism)
     s.run.vitals.stamina.max = 100;
     s.run.vitals.stamina.cur = 100;
-    expect(startTask(s, 'ward-a-barn')).toBe(true); // burns 0.15 Fire/s
+    expect(startTask(s, 'ward-a-barn')).toBe(true); // burns 0.15 Prism/s
 
-    const b = breakdown(s, { kind: 'essence', id: 'fire' });
+    const b = breakdown(s, { kind: 'essence', id: 'prism' });
     expect(b.produces.some((p) => p.name === 'Spark')).toBe(true);
     const contract = b.consumes.find((c) => c.name === 'Fulfil: Ward a Barn');
     expect(contract).toBeDefined();

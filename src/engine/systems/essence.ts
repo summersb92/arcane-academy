@@ -25,12 +25,10 @@ export function essenceBase(state: GameState): Partial<Record<ElementId, number>
     const def = CANTRIP_BY_ID[id];
     if (!def) continue;
     for (const e of def.effects) {
+      // v0.1.7: every awakening is now a FIXED `awaken` — Spark → ❖ Prismatic, the six
+      // openers → their element. The trickle only counts once the essence is awake.
       if (e.kind === 'awaken' && state.run.essence[e.element]?.awakened) {
         base[e.element] = (base[e.element] ?? 0) + e.trickle;
-      } else if (e.kind === 'awakenAffinity') {
-        // v0.1.4: the trickle feeds the awakened affinity element (Fire by default).
-        const el = state.run.affinityElement ?? 'fire';
-        if (state.run.essence[el]?.awakened) base[el] = (base[el] ?? 0) + e.trickle;
       }
     }
   }

@@ -37,11 +37,12 @@ import { strength, addStrengthXp } from './player';
 /** Strength XP earned per completion of a physical-labour (strengthScaled) task. */
 const STRENGTH_XP_PER_LABOR = 1;
 
-/** Resolve the 'affinity' essence sentinel to the awakened affinity element (or 'fire'
- *  when unset). Any other id passes through unchanged. Exported so the breakdown read
- *  model resolves contract essence costs the same way the sim does. */
+/** Resolve the 'affinity' essence sentinel to the awakened affinity element, or to ❖ Prismatic
+ *  when no element has been opened yet (v0.1.7 — Spark provides Prismatic, so early contracts
+ *  stay sustainable on its trickle). Any other id passes through unchanged. Exported so the
+ *  breakdown read model resolves contract essence costs the same way the sim does. */
 export function resolveAffinityId(state: GameState, id: AmountId): AmountId {
-  return id === 'affinity' ? state.run.affinityElement ?? 'fire' : id;
+  return id === 'affinity' ? state.run.affinityElement ?? 'prism' : id;
 }
 
 const RESOURCE_IDS: ResourceId[] = ['gold', 'insight', 'renown', 'moonpetal', 'ironOre', 'spiritDust', 'scroll'];
@@ -180,16 +181,6 @@ export function meetsRequirements(state: GameState, requires: Requirement[] | un
     }
   }
   return true;
-}
-
-/** Count how many of a task's requirements are currently UNMET (for the reveal rule). */
-function unmetRequirementCount(state: GameState, def: TaskDef): number {
-  if (!def.requires) return 0;
-  let n = 0;
-  for (const r of def.requires as Requirement[]) {
-    if (!meetsRequirements(state, [r])) n++;
-  }
-  return n;
 }
 
 function requirementsMet(state: GameState, def: TaskDef): boolean {
@@ -484,14 +475,12 @@ export function taskInfo(state: GameState, def: TaskDef): TaskInfo {
   const rt = peekRuntime(state, def.id);
   const maxed = def.type === 'limited' && rt.count >= (def.max ?? 1);
   const locked = !requirementsMet(state, def) || maxed;
-  // Reveal (display-only): active or ever done → always shown. Otherwise a SECRET card
-  // (v0.1.5) stays fully hidden until its requirements are ACTUALLY met (no leniency);
-  // a non-secret card keeps the ordinary rule: revealed once requirements are met OR at
-  // most one requirement away. Far-locked cards (≥2 unmet) stay hidden until they're close.
-  const revealed =
-    rt.active ||
-    rt.count > 0 ||
-    (def.secret ? requirementsMet(state, def) : unmetRequirementCount(state, def) <= 1);
+  // Reveal (display-only): active or ever done → always shown. Otherwise the card stays
+  // fully hidden until its requirements are ACTUALLY met (v0.1.6: any unmet requirement
+  // hides the card — the old "≤1 unmet is revealed" leniency is gone, so single-gate jobs
+  // no longer show as revealed-but-locked). The `secret` flag is now equivalent to the
+  // default (kept in the data as harmless).
+  const revealed = rt.active || rt.count > 0 || requirementsMet(state, def);
   const affordable = canAfford(state, def.startCost, 1);
   const cont = isContinuous(def);
   const freeSlots = activitySlots(state) - slotsUsed(state);

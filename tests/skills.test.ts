@@ -15,7 +15,7 @@ import { SPARK } from '../src/content/config';
 // Cantrips: DAG prereqs, spend + awaken, the global multiplier, +regen
 // ---------------------------------------------------------------------------
 describe('cantrips', () => {
-  it('respects DAG prereqs, spends Insight, awakens Fire and starts its trickle', () => {
+  it('respects DAG prereqs, spends Insight, awakens Prismatic and reveals your affinity (v0.1.7)', () => {
     const s = newGame(1);
     s.run.flags.awakened = true;
     s.run.resources.insight = 100;
@@ -29,19 +29,21 @@ describe('cantrips', () => {
     expect(learnCantrip(s, 'read-the-page')).toBe(true); // cost 5
     expect(s.run.resources.insight).toBeCloseTo(95, 6);
 
-    expect(learnCantrip(s, 'spark')).toBe(true); // cost 20, awakens Fire
-    expect(s.run.resources.insight).toBeCloseTo(75, 6);
+    expect(learnCantrip(s, 'spark')).toBe(true); // cost 10 (v0.1.7), awakens ❖ Prismatic
+    expect(s.run.resources.insight).toBeCloseTo(85, 6);
     expect(s.run.skills).toEqual(['read-the-page', 'spark']);
-    expect(s.run.essence.fire.awakened).toBe(true);
-    expect(essenceRates(s).fire).toBeCloseTo(0.2, 6); // trickle rate > 0
+    expect(s.run.essence.prism.awakened).toBe(true);
+    expect(s.run.essence.fire.awakened).toBe(false); // no specific element yet
+    expect(s.run.flags.affinityRevealed).toBe(true); // your bent is unveiled
+    expect(essenceRates(s).prism).toBeCloseTo(0.2, 6); // Prismatic trickle > 0
 
     // Learning the same cantrip twice is refused.
     expect(learnCantrip(s, 'spark')).toBe(false);
 
-    // The awakened trickle actually accrues on tick.
-    const before = s.run.essence.fire.amount;
+    // The awakened Prismatic trickle actually accrues on tick.
+    const before = s.run.essence.prism.amount;
     step(s, 1);
-    expect(s.run.essence.fire.amount).toBeCloseTo(before + 0.2, 6);
+    expect(s.run.essence.prism.amount).toBeCloseTo(before + 0.2, 6);
   });
 
   it('refuses a cantrip when Insight is short of the cost', () => {
@@ -86,19 +88,17 @@ describe('cantrips', () => {
 // Insight cap: the `*`-marker predicate, the tick clamp, cap-aware payoff/rates
 // ---------------------------------------------------------------------------
 describe('insight cap', () => {
-  it('Umbral Whisper exceeds the base cap until the Grand Library raises it', () => {
+  it('an elemental opener exceeds the base cap until the Insight cap is raised (v0.1.7)', () => {
     const s = newGame(5);
     s.run.flags.awakened = true;
-    s.run.flags.lairFounded = true; // Grand Library is now gated on the lair (v0.1.1)
-    const uw = () => listCantripInfo(s).find((c) => c.id === 'umbral-whisper')!;
-    expect(uw().exceedsCap).toBe(true); // cost 120 > base cap 5 (v0.1.2)
+    const fireOpener = () => listCantripInfo(s).find((c) => c.id === 'awaken-fire')!;
+    expect(fireOpener().cost).toBe(40); // dynamic base cost, 0 elements awakened
+    expect(fireOpener().exceedsCap).toBe(true); // 40 > base cap 5
 
-    // Build the Grand Library (limited task) to raise the Insight cap 5 → 155 (+150).
-    s.run.resources.gold = 100;
-    expect(startTask(s, 'grand-library')).toBe(true);
-    simulate(s, 9); // 8s build
-    expect(s.run.caps.insight).toBe(155);
-    expect(uw().exceedsCap).toBe(false); // 120 < 155
+    // Raise the Insight cap above the cost directly (the reachable in-game cap tops at 20;
+    // a proper cap-raiser via items arrives later — this asserts the `*` behaviour clears).
+    s.run.caps.insight = 200;
+    expect(fireOpener().exceedsCap).toBe(false); // 40 < 200
   });
 
   it('the tick clamps Insight to its cap', () => {
@@ -195,6 +195,6 @@ describe('cantrips require a Scroll (v0.1.2)', () => {
     expect(spark().affordable).toBe(true);
     expect(learnCantrip(s, 'spark')).toBe(true);
     expect(s.run.resources.scroll).toBe(0); // the Scroll was consumed
-    expect(s.run.essence.fire.awakened).toBe(true);
+    expect(s.run.essence.prism.awakened).toBe(true); // v0.1.7: Spark awakens ❖ Prismatic
   });
 });

@@ -156,16 +156,13 @@ function essenceBreakdown(state: GameState, id: ElementId): Breakdown {
   const produces: BreakdownEntry[] = [];
   const consumes: BreakdownEntry[] = [];
 
-  // Cantrip trickles that awakened this element (fixed `awaken`, or an `awakenAffinity`
-  // whose resolved element is this one).
+  // Cantrip trickles that awakened this element — every awakening is now a fixed `awaken`
+  // (v0.1.7): Spark → ❖ Prismatic, the six openers → their element.
   for (const sid of state.run.skills ?? []) {
     const def = CANTRIP_BY_ID[sid];
     if (!def) continue;
     for (const e of def.effects) {
       if (e.kind === 'awaken' && e.element === id) produces.push({ name: def.name, amount: e.trickle });
-      else if (e.kind === 'awakenAffinity' && (state.run.affinityElement ?? 'fire') === id) {
-        produces.push({ name: def.name, amount: e.trickle });
-      }
     }
   }
   // Home essence producers (Hearth Stone → Fire, Wayfarer Tent → Air).

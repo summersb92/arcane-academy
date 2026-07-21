@@ -338,6 +338,17 @@ export function normalize(state: GameState): void {
   if (run.affinityElement !== null && !(ELEMENTS as string[]).includes(run.affinityElement as string)) {
     run.affinityElement = null;
   }
+
+  // Progressive resource reveal (v0.1.6) — no SAVE_VERSION bump: handled purely here.
+  // Backfill the container, always show Gold, and seed discovery for anything an existing
+  // save already holds (> 0) so a loaded run immediately shows what it has earned.
+  run.discovered ??= {};
+  run.discovered.gold = true;
+  if (run.resources && typeof run.resources === 'object') {
+    for (const id of RESOURCE_IDS) {
+      if ((run.resources[id] ?? 0) > EPS) run.discovered[id] = true;
+    }
+  }
 }
 
 /** Structural + finiteness check — guards against NaN/garbage silently loading. */

@@ -29,9 +29,10 @@ function hedgeMage(seed = 1) {
   s.run.flags.awakened = true;
   s.run.flags.lairFounded = true;
   s.run.phase = 'lair';
-  s.run.skills = ['read-the-page', 'spark'];
+  s.run.skills = ['read-the-page', 'spark', 'awaken-fire'];
   s.run.essence.fire.awakened = true;
   s.run.essence.fire.amount = 100;
+  s.run.affinityElement = 'fire'; // v0.1.7: opener locks the contract 'affinity' essence to Fire
   return s;
 }
 

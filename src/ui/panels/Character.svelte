@@ -40,46 +40,32 @@
       </span>
     </div>
     <div class="mtr"><i style="width:{pct($game.vitals.mana.cur, $game.vitals.mana.max)}%;background:var(--mana)"></i></div>
-  {:else}
-    <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <div class="row dimmed" on:mouseenter={(e) => openTip(e, vitalTooltip('mana', '✦ Mana', 'mana'))} on:mouseleave={hideTooltip}>
-      <span class="nm mana">✦ Mana</span>
-      <span><span class="vl">— locked</span></span>
-    </div>
-    <div class="mtr locked"></div>
   {/if}
 
   <h2 class="mt">Attributes</h2>
-  <div
-    class="row"
-    title="Strength grows from physical labour (mucking stables) and multiplies the Gold that hard graft pays."
-  >
-    <span class="nm">💪 Strength</span>
-    <span>
-      <span class="vl">×{$game.player.strength.toFixed(2)}</span>
-      <span class="rt reg">Lv {$game.player.strengthLevel}</span>
-    </span>
-  </div>
-
-  <h2 class="mt">Essence</h2>
-  {#each $game.essence as e (e.id)}
-    <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <div
-      class="row ess"
-      class:dimmed={!e.awakened}
-      on:mouseenter={(ev) => openTip(ev, essenceTooltip(e))}
-      on:mouseleave={hideTooltip}
-    >
-      <span class="essnm {e.cls}"><span class="dot {e.cls}"></span>{e.glyph} {e.label}</span>
-      <span>
-        <span class="vl">{e.awakened ? fmt(e.amount) : '—'}</span>
-        <span class="rt">{e.awakened ? fmtRate(e.rate) : ''}</span>
-      </span>
+  {#each $game.player.attributes as a (a.key)}
+    <div class="row" title={a.hint}>
+      <span class="nm">{a.glyph} {a.label}</span>
+      <span><span class="vl">×{a.value.toFixed(2)}</span></span>
     </div>
   {/each}
 
-  <h2 class="mt">Opposed pairs</h2>
-  <div class="chron">Fire ↔ Water · Earth ↔ Air · Light ↔ Dark<br />Balance all six → ❖ Prismatic.</div>
+  {#if $game.essence.some((e) => e.awakened)}
+    <h2 class="mt">Essence</h2>
+    {#each $game.essence.filter((e) => e.awakened) as e (e.id)}
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <div class="row ess" on:mouseenter={(ev) => openTip(ev, essenceTooltip(e))} on:mouseleave={hideTooltip}>
+        <span class="essnm {e.cls}"><span class="dot {e.cls}"></span>{e.glyph} {e.label}</span>
+        <span>
+          <span class="vl">{fmt(e.amount)}</span>
+          <span class="rt">{fmtRate(e.rate)}</span>
+        </span>
+      </div>
+    {/each}
+
+    <h2 class="mt">Opposed pairs</h2>
+    <div class="chron">Fire ↔ Water · Earth ↔ Air · Light ↔ Dark<br />Balance all six → ❖ Prismatic.</div>
+  {/if}
 </div>
 
 <style>
@@ -106,13 +92,5 @@
     background: currentColor;
     flex: none;
     box-shadow: 0 0 0 1px var(--edge);
-  }
-  /* Sealed Mana: an empty dashed meter mirroring the dimmed-essence pattern. */
-  .mtr.locked {
-    background: transparent;
-    border: 1px dashed var(--edge);
-    height: 5px;
-    border-radius: 3px;
-    margin: 2px 0 6px;
   }
 </style>

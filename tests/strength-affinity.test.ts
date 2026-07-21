@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { newGame, ELEMENTS, SAVE_VERSION, type GameState } from '../src/engine/state';
 import { simulate, step } from '../src/engine/tick';
 import { doTask, startTask } from '../src/engine/systems/tasks';
-import { learnCantrip } from '../src/engine/systems/skills';
+import { learnCantrip, listCantripInfo, openerCost, awakenedElementCount } from '../src/engine/systems/skills';
 import { essenceRates } from '../src/engine/systems/essence';
 import { breakdown } from '../src/engine/systems/breakdown';
 import {
@@ -137,13 +137,23 @@ describe('Strength stat (v0.1.4)', () => {
     expect(s.run.resources.gold).toBeCloseTo(1.6, 6); // NOT ×1.3
   });
 
-  it('the Player view exposes Strength for the Character panel', () => {
+  it('the Player view exposes the six attributes for the Character panel', () => {
     const s = newGame(1);
-    s.run.strengthXp = 30;
+    s.run.strengthXp = 30; // → Strength level 2 → ×1.20
     const p = toView(s).player;
-    expect(p.strengthXp).toBe(30);
-    expect(p.strengthLevel).toBe(2);
-    expect(p.strength).toBeCloseTo(1.2, 6);
+    expect(p.attributes).toHaveLength(6);
+    const str = p.attributes.find((a) => a.key === 'strength');
+    expect(str?.value).toBeCloseTo(1.2, 6);
+    // the other five start at ×1.00 (growth wired later); no separate level field
+    expect(p.attributes.find((a) => a.key === 'charisma')?.value).toBe(1);
+    expect(p.attributes.map((a) => a.key)).toEqual([
+      'strength',
+      'dexterity',
+      'constitution',
+      'intelligence',
+      'wisdom',
+      'charisma',
+    ]);
   });
 });
 
@@ -176,46 +186,136 @@ describe('elemental affinity (v0.1.4)', () => {
     expect(s.run.affinity.fire).toBeGreaterThanOrEqual(1);
   });
 
-  it('learning Spark awakens the DOMINANT affinity element and sets affinityElement (once)', () => {
+  it('Spark awakens ❖ Prismatic + reveals your affinity — NOT a specific element (v0.1.7)', () => {
     const s = newGame(1);
-    s.run.affinity.water = 3; // Water is now dominant
+    s.run.affinity.water = 3; // Water is dominant
     s.run.flags.awakened = true;
     s.run.resources.insight = 100;
     s.run.resources.scroll = 1; // Spark needs a Scroll
     expect(learnCantrip(s, 'read-the-page')).toBe(true);
     expect(learnCantrip(s, 'spark')).toBe(true);
 
-    expect(s.run.affinityElement).toBe('water');
-    expect(s.run.essence.water.awakened).toBe(true);
-    expect(s.run.essence.fire.awakened).toBe(false); // Fire NOT awakened
-    expect(essenceRates(s).water).toBeCloseTo(0.2, 6); // trickle feeds Water
+    // Spark opens the generic essence and unveils the bent — but no element yet.
+    expect(s.run.essence.prism.awakened).toBe(true);
+    expect(s.run.flags.affinityRevealed).toBe(true);
+    expect(s.run.affinityElement).toBe(null); // NOT locked to an element yet
+    expect(s.run.essence.water.awakened).toBe(false);
+    expect(s.run.essence.fire.awakened).toBe(false);
+    expect(essenceRates(s).prism).toBeCloseTo(0.2, 6); // Prismatic trickle
   });
 
-  it('with no element work, Spark awakens Fire (back-compat default)', () => {
+  it("the DOMINANT-affinity opener is available after Spark and awakens that element (v0.1.7)", () => {
     const s = newGame(1);
+    s.run.affinity.water = 3; // Water is dominant → awaken-water is the one unveiled
     s.run.flags.awakened = true;
-    s.run.resources.insight = 100;
-    s.run.resources.scroll = 1;
+    s.run.resources.insight = 1000; // set directly (openers exceed the in-game cap)
+    s.run.resources.scroll = 5;
     learnCantrip(s, 'read-the-page');
     learnCantrip(s, 'spark');
-    expect(s.run.affinityElement).toBe('fire');
-    expect(s.run.essence.fire.awakened).toBe(true);
-    expect(essenceRates(s).fire).toBeCloseTo(0.2, 6);
+
+    const info = (id: string) => listCantripInfo(s).find((c) => c.id === id)!;
+    expect(info('awaken-water').status).toBe('available'); // dominant surfaces first
+    expect(info('awaken-fire').status).toBe('locked'); // non-dominant, not yet unveiled
+    expect(info('awaken-fire').prereqNote).toMatch(/hasn't surfaced/);
+
+    // Learning the dominant opener awakens Water and locks affinityElement to it.
+    expect(learnCantrip(s, 'awaken-water')).toBe(true);
+    expect(s.run.essence.water.awakened).toBe(true);
+    expect(s.run.affinityElement).toBe('water');
+    expect(essenceRates(s).water).toBeCloseTo(0.2, 6);
+  });
+
+  it('a NON-dominant opener stays locked until ≥1 element is awakened (v0.1.7)', () => {
+    const s = newGame(1);
+    s.run.affinity.water = 3; // Water dominant → Fire opener is NOT dominant
+    s.run.flags.awakened = true;
+    s.run.resources.insight = 1000;
+    s.run.resources.scroll = 5;
+    learnCantrip(s, 'read-the-page');
+    learnCantrip(s, 'spark');
+
+    const fireStatus = () => listCantripInfo(s).find((c) => c.id === 'awaken-fire')!.status;
+    expect(fireStatus()).toBe('locked'); // not dominant, no element awakened yet
+    expect(learnCantrip(s, 'awaken-fire')).toBe(false); // engine refuses the un-unveiled opener
+
+    // Awaken the dominant Water first → every other opener now surfaces.
+    expect(learnCantrip(s, 'awaken-water')).toBe(true);
+    expect(fireStatus()).toBe('available');
+    expect(learnCantrip(s, 'awaken-fire')).toBe(true);
+  });
+
+  it('opener cost scales 40 → 64 → 102 … per element already awakened, and is charged (v0.1.7)', () => {
+    const s = newGame(1);
+    s.run.flags.awakened = true;
+    s.run.resources.insight = 1000;
+    s.run.resources.scroll = 9;
+    learnCantrip(s, 'read-the-page');
+    learnCantrip(s, 'spark'); // awakens ❖ Prismatic only (excluded from the count)
+
+    expect(awakenedElementCount(s)).toBe(0);
+    expect(openerCost(s)).toBe(40); // 1st = 40·1.6⁰
+
+    const insightBeforeFirst = s.run.resources.insight;
+    expect(learnCantrip(s, 'awaken-fire')).toBe(true); // fire is the default dominant
+    expect(insightBeforeFirst - s.run.resources.insight).toBeCloseTo(40, 6); // charged 40
+
+    expect(awakenedElementCount(s)).toBe(1);
+    expect(openerCost(s)).toBe(64); // 2nd = Math.round(40·1.6) = 64
+
+    const insightBeforeSecond = s.run.resources.insight;
+    expect(learnCantrip(s, 'awaken-water')).toBe(true);
+    expect(insightBeforeSecond - s.run.resources.insight).toBeCloseTo(64, 6); // charged 64
+    expect(openerCost(s)).toBe(102); // 3rd = Math.round(40·1.6²) = 102
+  });
+
+  it('the 40+ openers show the exceeds-cap `*` marker under the reachable cap (v0.1.7)', () => {
+    const s = newGame(1);
+    s.run.affinity.fire = 3; // fire dominant → awaken-fire is unveiled after Spark
+    s.run.flags.awakened = true;
+    s.run.caps.insight = 20; // the reachable in-game ceiling (Notebook ×3)
+    s.run.resources.insight = 1000;
+    s.run.resources.scroll = 5;
+    learnCantrip(s, 'read-the-page');
+    learnCantrip(s, 'spark');
+    const fire = listCantripInfo(s).find((c) => c.id === 'awaken-fire')!;
+    expect(fire.cost).toBe(40);
+    expect(fire.exceedsCap).toBe(true); // 40 > 20 → wears the `*`
   });
 });
 
 // ---------------------------------------------------------------------------
 // Contracts: Gold-only, and their essence cost follows the awakened affinity element
 // ---------------------------------------------------------------------------
-describe('contracts follow the affinity essence (v0.1.4)', () => {
-  it('a contract costs the awakened element essence and auto-pauses when it runs out', () => {
+describe('contracts follow the affinity essence (v0.1.4 / v0.1.7)', () => {
+  it("a contract resolves to ❖ Prismatic before any element is opened (sustainable on Spark)", () => {
     const s = newGame(1);
-    s.run.affinity.water = 5; // Water dominant
     s.run.flags.awakened = true;
     s.run.resources.insight = 100;
     s.run.resources.scroll = 1;
     learnCantrip(s, 'read-the-page');
-    learnCantrip(s, 'spark'); // awakens Water, affinityElement = 'water'
+    learnCantrip(s, 'spark'); // awakens ❖ Prismatic; affinityElement still null
+    expect(s.run.affinityElement).toBe(null);
+
+    s.run.essence.prism.amount = 100; // Spark's Prismatic fuels the contract
+    s.run.vitals.stamina.max = 100;
+    s.run.vitals.stamina.cur = 100;
+    expect(startTask(s, 'ward-a-barn')).toBe(true);
+
+    step(s, 1); // burns Prism 0.15/s (sentinel → 'prism'), Spark trickles +0.2 Prism
+    expect(s.run.essence.prism.amount).toBeCloseTo(100 - 0.15 + 0.2, 6);
+    // Net-positive on Spark alone: the contract is sustainable at the reachable tier.
+    expect(s.run.essence.prism.amount).toBeGreaterThan(100);
+  });
+
+  it('a contract costs the awakened element essence and auto-pauses when it runs out', () => {
+    const s = newGame(1);
+    s.run.affinity.water = 5; // Water dominant
+    s.run.flags.awakened = true;
+    s.run.resources.insight = 1000;
+    s.run.resources.scroll = 5;
+    learnCantrip(s, 'read-the-page');
+    learnCantrip(s, 'spark'); // awakens ❖ Prismatic; affinityElement still null
+    learnCantrip(s, 'awaken-water'); // the dominant opener → awakens Water, affinityElement = 'water'
     expect(s.run.affinityElement).toBe('water');
 
     s.run.essence.water.amount = 100; // fuel the contract
@@ -289,5 +389,18 @@ describe('save v5 (strength + affinity)', () => {
     const res = safeLoad(serialize(s as never));
     expect(res.ok).toBe(true);
     expect(res.state!.run.affinityElement).toBe(null);
+  });
+
+  it('an old save with the removed umbral-whisper cantrip in skills[] loads without crashing (v0.1.7)', () => {
+    const s = newGame(12);
+    // A pre-v0.1.7 save: the old opener id lingers in skills[]; the read models must
+    // tolerate an unknown/removed cantrip id (CANTRIP_BY_ID lookups guard it).
+    s.run.skills = ['read-the-page', 'umbral-whisper'];
+    const res = safeLoad(serialize(s));
+    expect(res.ok).toBe(true);
+    expect(res.state!.run.skills).toContain('umbral-whisper'); // lingers harmlessly
+    expect(() => toView(res.state!)).not.toThrow(); // read models don't crash
+    expect(() => listCantripInfo(res.state!)).not.toThrow();
+    expect(() => essenceRates(res.state!)).not.toThrow();
   });
 });

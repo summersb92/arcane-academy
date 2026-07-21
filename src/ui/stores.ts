@@ -37,7 +37,7 @@ import {
   type TaskInfo,
 } from '../engine/systems/tasks';
 import { learnCantrip as engineLearnCantrip, listCantripInfo, outputMult } from '../engine/systems/skills';
-import { setName as engineSetName, strength as engineStrength, strengthLevel as engineStrengthLevel } from '../engine/systems/player';
+import { setName as engineSetName, strength as engineStrength } from '../engine/systems/player';
 import { essenceRates } from '../engine/systems/essence';
 import {
   homeTier,
@@ -140,16 +140,22 @@ export interface TabView {
   visible: boolean;
   locked: boolean;
 }
+/** One of the six D&D-style attributes. The `value` IS the level — a multiplier that
+ *  starts at ×1.00 and grows; there is no separate level number. Only Strength grows so
+ *  far (from physical labour); the rest sit at ×1.00 until their growth is wired. */
+export interface AttributeView {
+  key: string;
+  label: string;
+  glyph: string;
+  value: number; // multiplier, ×1.00 at the start
+  hint: string; // tooltip: what it governs / how it grows
+}
 export interface PlayerView {
   name: string; // the mage's chosen name ('' → not yet named)
   title: string; // earned honorific ('Waif' at the Origin)
   renown: number; // ★ Renown (mirrored here; also stays in resources for now)
   needsNaming: boolean; // true on a fresh game / post-reset / old save → prompt for a name
-  // Strength stat (v0.1.4) for the Character panel: the effective multiplier, its level,
-  // and the raw XP. strength = 1 + 0.1·level; scales Clean Stables' Gold output.
-  strength: number; // effective multiplier (×1.0 at level 0)
-  strengthLevel: number; // 0, 1, 2 …
-  strengthXp: number; // raw accrued Strength XP
+  attributes: AttributeView[]; // the six attributes (STR/DEX/CON/INT/WIS/CHA), always shown
 }
 export interface ChronicleView {
   t: string;
@@ -231,6 +237,9 @@ export interface EquipmentView {
 export interface UiState {
   resources: { gold: ResourceView; insight: ResourceView; renown: ResourceView };
   materials: { moonpetal: number; ironOre: number; spiritDust: number; scroll: number };
+  // Progressive reveal (v0.1.6): which resources the player has discovered (ever held > 0).
+  // The left panel shows Gold always, and each Insight/material row only once discovered.
+  discovered: Partial<Record<ResourceId, boolean>>;
   player: PlayerView;
   vitals: { life: VitalView; stamina: VitalView; mana: VitalView };
   essence: EssenceView[];
@@ -711,7 +720,8 @@ function buildCantripView(info: ReturnType<typeof listCantripInfo>[number]): Can
   const prereqNote =
     info.status === 'locked' && info.missingPrereqs.length
       ? `needs: ${info.missingPrereqs.map((r) => CANTRIP_BY_ID[r]?.name ?? r).join(', ')}`
-      : undefined;
+      : // an un-unveiled elemental opener (Spark owned) carries its own engine-side note
+        info.prereqNote;
   return {
     id: info.id,
     name: info.name,
@@ -762,14 +772,26 @@ export function toView(state: GameState): UiState {
       renown: { amount: r.renown, rate: rates.resources.renown ?? 0 },
     },
     materials: { moonpetal: r.moonpetal, ironOre: r.ironOre, spiritDust: r.spiritDust, scroll: r.scroll },
+    discovered: state.run.discovered ?? { gold: true },
     player: {
       name: state.run.name ?? '',
       title: state.run.title ?? 'Waif',
       renown: r.renown,
       needsNaming: (state.run.name ?? '') === '',
-      strength: engineStrength(state),
-      strengthLevel: engineStrengthLevel(state),
-      strengthXp: state.run.strengthXp ?? 0,
+      attributes: [
+        { key: 'strength', label: 'Strength', glyph: '💪', value: engineStrength(state),
+          hint: 'Grows from physical labour (mucking stables); multiplies the Gold hard graft pays.' },
+        { key: 'dexterity', label: 'Dexterity', glyph: '🎯', value: 1,
+          hint: 'Deftness and speed of hand. (Growth coming.)' },
+        { key: 'constitution', label: 'Constitution', glyph: '🛡', value: 1,
+          hint: 'Toughness and stamina. (Growth coming.)' },
+        { key: 'intelligence', label: 'Intelligence', glyph: '📖', value: 1,
+          hint: 'Reasoning and study. (Growth coming.)' },
+        { key: 'wisdom', label: 'Wisdom', glyph: '🦉', value: 1,
+          hint: 'Insight and intuition. (Growth coming.)' },
+        { key: 'charisma', label: 'Charisma', glyph: '🎭', value: 1,
+          hint: 'Presence and persuasion. (Growth coming.)' },
+      ],
     },
     vitals: {
       // regen is the EFFECTIVE rate the tick applies (base + equipped-item `rate` mods),

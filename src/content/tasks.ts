@@ -326,20 +326,6 @@ const CORE_TASKS: TaskDef[] = [
     secret: true,
     effects: [{ kind: 'raiseInsightCap', amount: 5 }], // Insight cap +5 per build (5 → 20)
   },
-  {
-    id: 'grand-library',
-    name: 'Grand Library',
-    type: 'limited',
-    tag: 'Storage',
-    cls: 'insight',
-    blurb: 'Shelves to the rafters — suddenly there is room for far more Insight than a mind alone can hold.',
-    chip: 'Upgrade',
-    length: 8,
-    max: 1,
-    startCost: [A('resource', 'gold', 60)],
-    requires: [{ kind: 'flag', flag: 'lairFounded' }],
-    effects: [{ kind: 'raiseInsightCap', amount: 150 }], // Insight cap 100 → 250 (exercises caps + the `*` marker)
-  },
   // --- SIX element-job TOOLS (v0.1.5) — one-off Limited purchases (Gold 40, max 1) that
   //     PERMANENTLY boost their element job's Gold output by +50%. Each is SECRET and only
   //     appears after ~5 completions of the job it fits (taskCount gate). The boost is DERIVED

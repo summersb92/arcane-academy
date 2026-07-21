@@ -17,8 +17,13 @@
 
   // Home-panel tasks (the Founding) render on the Home tab, not here.
   $: active = $game.tasks.filter((t) => t.active && t.panel !== 'home');
-  // Hide far-locked cards (revealed=false); keep active + revealed-but-locked (dimmed).
+  // Revealed, non-active Main-tab cards (v0.1.6: revealed now means requirements are met).
   $: available = $game.tasks.filter((t) => !t.active && t.panel !== 'home' && t.revealed);
+  // Split available into the doable Activities (instant/running/perpetual) and the one-off
+  // purchase Upgrades (Limited — Coin Pouch, Notebook, Tools, Find Lodging). The Upgrades
+  // grid lives in its own collapsible section below the Activities (v0.1.6).
+  $: activities = available.filter((t) => t.type !== 'limited');
+  $: upgrades = available.filter((t) => t.type === 'limited');
 </script>
 
 <main>
@@ -76,10 +81,10 @@
       {/if}
 
       <h2 class="mt">
-        Available <span class="tag" style="font-weight:400">· click a card to {'start / do it'}</span>
+        Activities <span class="tag" style="font-weight:400">· click a card to {'start / do it'}</span>
       </h2>
       <div class="tgrid">
-        {#each available as t (t.id)}
+        {#each activities as t (t.id)}
           <div
             class="tcard"
             class:locked={t.locked}
@@ -112,6 +117,46 @@
           </div>
         {/each}
       </div>
+
+      {#if upgrades.length > 0}
+        <details class="upgrades" open>
+          <summary><span class="uptitle">Upgrades</span></summary>
+          <div class="tgrid">
+            {#each upgrades as t (t.id)}
+              <div
+                class="tcard"
+                class:locked={t.locked}
+                class:cant={!t.locked && !t.startable}
+                role="button"
+                tabindex={t.locked ? -1 : 0}
+                aria-disabled={t.locked}
+                title={t.locked ? 'Requirements unmet' : 'Click to start'}
+                style="border-left-color:var(--{t.cls})"
+                on:click={() => { hideTooltip(); onTask(t); }}
+                on:keydown={(e) => onKey(e, t)}
+                on:mouseenter={(e) => openTip(e, taskTooltip(t))}
+                on:focus={(e) => openTip(e, taskTooltip(t))}
+                on:mouseleave={hideTooltip}
+                on:blur={hideTooltip}
+              >
+                <div class="tt">
+                  <span class="nm">{#if t.locked}🔒 {/if}{t.name}</span><span class="chip">{t.kind}</span>
+                </div>
+                <div class="io tag">{t.tag}{#if t.atText} · {t.atText}{/if}</div>
+                {#if t.locked}
+                  <div class="io lockt">{t.lockText ?? ''}</div>
+                {:else}
+                  <div class="io">{t.io}{#if t.capMark}<span class="cap" title={t.capNote}>{t.capMark}</span>{/if}</div>
+                  <div class="io payoff" class:cantpay={!t.affordable}>
+                    {t.payoff}{#if !t.affordable} · can't afford{/if}
+                  </div>
+                  {#if t.slotNote}<div class="io warn">{t.slotNote}</div>{/if}
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </details>
+      {/if}
     </section>
   {:else if $activeTab === 'player'}
     <Player />
@@ -148,6 +193,49 @@
 </main>
 
 <style>
+  /* Upgrades sub-section — a collapsible <details> below the Activities grid, styled
+     with existing tokens to match the Chronicle disclosure (keyboard-accessible, themed,
+     reduced-motion friendly). */
+  .upgrades {
+    margin-top: 16px;
+  }
+  .upgrades > summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .upgrades > summary::-webkit-details-marker {
+    display: none;
+  }
+  .upgrades > summary::before {
+    content: '▸';
+    color: var(--faint);
+    font-size: 10px;
+    transition: transform 0.12s;
+  }
+  .upgrades[open] > summary::before {
+    transform: rotate(90deg);
+  }
+  .uptitle {
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    color: var(--label);
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .upgrades > summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .upgrades > summary::before {
+      transition: none;
+    }
+  }
   .payoff {
     color: var(--ok);
     font-size: 11px;

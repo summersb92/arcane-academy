@@ -10,7 +10,10 @@ import { runProgression } from './systems/progression';
 
 /** Resources with a storage cap (Renown is uncapped). Clamped via effectiveCap each tick. */
 const CAPPED_RESOURCES: ResourceId[] = ['gold', 'insight', 'moonpetal', 'ironOre', 'spiritDust'];
+/** Every resource id — iterated for the progressive-reveal discovery marking (v0.1.6). */
+const ALL_RESOURCES: ResourceId[] = ['gold', 'insight', 'renown', 'moonpetal', 'ironOre', 'spiritDust', 'scroll'];
 const VITALS: VitalId[] = ['stamina', 'mana', 'life'];
+const EPS = 1e-9;
 
 export const TICK = 0.1; // seconds per fixed step
 export const MAX_CATCHUP_STEPS = 100_000; // bounds a single advance()
@@ -39,6 +42,13 @@ export function step(state: GameState, dt: number): void {
 
   // --- vital regen (effective rate = base vital.regen + item `rate` mods; no double-count) ---
   for (const v of VITALS) regen(run.vitals[v], effectiveRegen(state, v), dt);
+
+  // --- progressive reveal (v0.1.6): mark any resource we now hold > 0 as discovered, so
+  //     the left panel reveals its row once earned and keeps showing it thereafter. ---
+  if (!run.discovered) run.discovered = { gold: true }; // heal legacy/partial saves
+  for (const id of ALL_RESOURCES) {
+    if (!run.discovered[id] && (run.resources[id] ?? 0) > EPS) run.discovered[id] = true;
+  }
 
   state.playtime += dt;
 

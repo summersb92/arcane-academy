@@ -153,32 +153,31 @@ describe('running tasks', () => {
 });
 
 describe('timed completion epsilon (playtest fix)', () => {
-  it('a length:8 Limited task completes at EXACTLY its duration — no one-tick-late strand', () => {
+  it('a Limited task completes at EXACTLY its duration — no one-tick-late strand', () => {
     const s = newGame(1);
-    s.run.flags.lairFounded = true; // Grand Library is now gated on the lair (v0.1.1)
     s.run.resources.gold = 100;
-    expect(startTask(s, 'grand-library')).toBe(true); // length 8; raiseInsightCap 150
+    expect(startTask(s, 'coin-pouch')).toBe(true); // length 3; raiseGoldCap 25
     expect(slotsUsed(s)).toBe(1);
 
-    // Pre-fix, progress lands at 0.9999999999999984 at t=8 and the task never completes,
-    // stranding its slot + spent Gold until an extra tick. It must complete AT 8s.
-    simulate(s, 8);
+    // Float accumulation can leave progress a hair under 1 at exactly the duration; without
+    // the EPS completion guard the task strands its slot + spent Gold for an extra tick. It
+    // must complete AT its duration (3s).
+    simulate(s, 3);
 
-    expect(s.run.tasks['grand-library'].count).toBe(1);
-    expect(s.run.tasks['grand-library'].active).toBe(false); // slot freed on completion
+    expect(s.run.tasks['coin-pouch'].count).toBe(1);
+    expect(s.run.tasks['coin-pouch'].active).toBe(false); // slot freed on completion
     expect(slotsUsed(s)).toBe(0);
-    expect(s.run.caps.insight).toBe(155); // 5 → 155 effect applied (base 5 + 150)
+    expect(s.run.caps.gold).toBe(50); // 25 → 50 effect applied
   });
 
   it('the exact-duration completion is identical via offline catch-up (advanceFixed path)', () => {
     const s = newGame(1);
-    s.run.flags.lairFounded = true;
     s.run.resources.gold = 100;
-    startTask(s, 'grand-library');
-    s.lastSaved = Date.now() - 8000; // exactly 8s away
+    startTask(s, 'coin-pouch');
+    s.lastSaved = Date.now() - 3000; // exactly 3s away
     applyOffline(s, Date.now());
-    expect(s.run.tasks['grand-library'].count).toBe(1);
-    expect(s.run.caps.insight).toBe(155);
+    expect(s.run.tasks['coin-pouch'].count).toBe(1);
+    expect(s.run.caps.gold).toBe(50);
   });
 
   it('a perpetual + running mix still behaves across the fix', () => {
@@ -202,16 +201,15 @@ describe('timed completion epsilon (playtest fix)', () => {
 describe('limited start-cost rate (display fix)', () => {
   it('a building Limited task shows no phantom per-second start-cost drain', () => {
     const s = newGame(1);
-    s.run.flags.lairFounded = true;
     s.run.resources.gold = 100;
-    expect(startTask(s, 'grand-library')).toBe(true); // pays Gold 60 ONCE at start
-    expect(s.run.resources.gold).toBeCloseTo(40, 6);
+    expect(startTask(s, 'coin-pouch')).toBe(true); // pays Gold 20 ONCE at start
+    expect(s.run.resources.gold).toBeCloseTo(80, 6);
 
     // The one-time start-cost must NOT amortize as a per-second drain while it builds:
-    // Gold stays flat (the 60 was already paid), unlike a repeating Running cycle.
+    // Gold stays flat (the 20 was already paid), unlike a repeating Running cycle.
     expect(taskRates(s).resources.gold ?? 0).toBe(0);
-    const gl = listTaskInfo(s).find((i) => i.id === 'grand-library')!;
-    expect(gl.net.gold ?? 0).toBe(0);
+    const cp = listTaskInfo(s).find((i) => i.id === 'coin-pouch')!;
+    expect(cp.net.gold ?? 0).toBe(0);
   });
 });
 
@@ -219,34 +217,42 @@ describe('limited start-cost rate (display fix)', () => {
 // v0.1.1 — Odd Jobs ladder + card reveal + Home items/caps + learnable Mana
 // ---------------------------------------------------------------------------
 describe('card reveal (display-only)', () => {
-  it('a far-locked task is hidden; a one-away task is revealed', () => {
+  it('a locked task is hidden until ALL its requirements are met (v0.1.6: no leniency)', () => {
     const s = newGame(1);
-    // Cleanse the Old Well needs BOTH Spark AND Ward-a-Barn ×5 — 2 unmet reqs at the
-    // Origin → far-locked → hidden (v0.1.4: the Renown gate is gone).
+    // Cleanse the Old Well needs BOTH Spark AND Ward-a-Barn ×5 — unmet at the Origin → hidden.
     expect(taskInfo(s, TASK_BY_ID['cleanse-the-old-well']).revealed).toBe(false);
 
-    // Satisfy one of the two (Spark) → now exactly one requirement away → revealed.
-    s.run.skills = ['read-the-page', 'spark'];
-    expect(taskInfo(s, TASK_BY_ID['cleanse-the-old-well']).revealed).toBe(true);
+    // find-work has ONE requirement (begging ×20). v0.1.6: a single unmet requirement now
+    // HIDES the card (the old "one-away is revealed" leniency is gone).
+    expect(taskInfo(s, TASK_BY_ID['find-work']).revealed).toBe(false);
 
-    // Scribe Scroll has ONE requirement now (Read the Page) → one-away → revealed
-    // even at the Origin (v0.1.2).
-    expect(taskInfo(s, TASK_BY_ID['scribe-scroll']).revealed).toBe(true);
-
-    // find-work has ONE requirement (begging ×20) → one-away → revealed even
-    // before it's actually unlocked (v0.1.4 ladder reorder).
-    expect(taskInfo(s, TASK_BY_ID['find-work']).revealed).toBe(true);
+    // Scribe Scroll needs Read the Page — unmet at the Origin → hidden.
+    expect(taskInfo(s, TASK_BY_ID['scribe-scroll']).revealed).toBe(false);
 
     // begging has no requirements → always revealed.
     expect(taskInfo(s, TASK_BY_ID['begging']).revealed).toBe(true);
+
+    // Meet find-work's gate (begging ×20) → now revealed.
+    s.run.tasks['begging'] = { active: false, progress: 0, paused: false, count: 20, repeat: false };
+    expect(taskInfo(s, TASK_BY_ID['find-work']).revealed).toBe(true);
+
+    // Meet ONE of Cleanse's two gates (Spark) but not the other → still hidden (strict).
+    s.run.skills = ['read-the-page', 'spark'];
+    expect(taskInfo(s, TASK_BY_ID['cleanse-the-old-well']).revealed).toBe(false);
   });
 
-  it('reveal never changes gating: a revealed-but-locked task is still not startable', () => {
+  it('reveal is display-only: a maxed Limited task stays revealed but is locked', () => {
     const s = newGame(1);
-    const info = taskInfo(s, TASK_BY_ID['find-work']);
-    expect(info.revealed).toBe(true);
-    expect(info.locked).toBe(true); // begging ×20 not met
-    expect(startTask(s, 'find-work')).toBe(false); // gating unchanged (find-work is now a running job)
+    // Build Coin Pouch to its Max (3): count>0 keeps it revealed; maxed makes it locked.
+    for (let i = 0; i < 3; i++) {
+      s.run.resources.gold = 100;
+      startTask(s, 'coin-pouch');
+      simulate(s, 4);
+    }
+    const info = taskInfo(s, TASK_BY_ID['coin-pouch']);
+    expect(info.revealed).toBe(true); // ever-completed → still shown
+    expect(info.locked).toBe(true); // maxed → not startable
+    expect(startTask(s, 'coin-pouch')).toBe(false);
   });
 });
 
@@ -373,17 +379,17 @@ describe('Inn rent', () => {
 // ---------------------------------------------------------------------------
 // v0.1.5 — secret reveal, element-job tools, Find Lodging
 // ---------------------------------------------------------------------------
-describe('secret reveal (v0.1.5)', () => {
-  it('a secret task stays hidden until its gate is met — no "one-away" leniency', () => {
+describe('secret reveal (v0.1.6: strict reveal)', () => {
+  it('any task with an unmet requirement stays hidden — secret or not', () => {
     const s = newGame(1);
-    // Notebook is SECRET, gated on `awakened`. Its single requirement being one-away does
-    // NOT reveal it (secret cards get no leniency) → hidden before the spark.
+    // Notebook is SECRET, gated on `awakened` → hidden before the spark.
     expect(taskInfo(s, TASK_BY_ID['notebook']).revealed).toBe(false);
 
-    // Contrast: find-work is NON-secret with one unmet requirement (begging ×20) → the
-    // ordinary "one-away is revealed" rule applies → revealed, but still locked.
+    // find-work is NON-secret with one unmet requirement (begging ×20). v0.1.6: the secret
+    // flag is now equivalent to the default — any unmet requirement hides the card, so
+    // find-work is ALSO hidden (still locked).
     const fw = taskInfo(s, TASK_BY_ID['find-work']);
-    expect(fw.revealed).toBe(true);
+    expect(fw.revealed).toBe(false);
     expect(fw.locked).toBe(true);
   });
 

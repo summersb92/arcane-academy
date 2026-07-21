@@ -52,8 +52,8 @@ export interface AutoplayResult {
 // The cantrips the bot pursues, cheapest → most useful first. Mend (Stamina regen) is
 // learned right after Read the Page so Study becomes sustainable under the tight
 // Stamina budget; Spark opens Fire (contracts); Kindle Focus is a global +10%.
-// `umbral-whisper` (over the cap, Dark) and `inner-wellspring` (Mana, off-path) are
-// omitted — a lean run to the Founding never needs them.
+// The elemental openers (over the cap, v0.1.7) and `inner-wellspring` (Mana, off-path)
+// are omitted — a lean run to the Founding never needs them.
 const WISHLIST = ['read-the-page', 'mend', 'spark', 'kindle-focus'];
 
 // The continuous "engine" tasks the bot juggles across its Activity slots. Founding

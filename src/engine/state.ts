@@ -78,12 +78,17 @@ export interface RunState {
   // the effective multiplier is DERIVED from it (see systems/player.ts strength()).
   strengthXp: number;
   // Hidden elemental AFFINITY (v0.1.4): a per-element counter incremented whenever an
-  // element-tagged income task completes. The dominant element becomes the FIRST awakened
-  // element (via the Spark cantrip's awakenAffinity effect). `affinityElement` is that
-  // awakened element (null until awakening); it resolves the 'affinity' essence sentinel
-  // in contract costs. Defaults to 'fire' everywhere it is unset (back-compat).
+  // element-tagged income task completes. The dominant element's opener is unveiled first
+  // after Spark (v0.1.7); learning that opener sets `affinityElement` — the awakened element
+  // (null until awakening) that resolves the 'affinity' essence sentinel in contract costs.
+  // While it is null the sentinel resolves to ❖ Prismatic (Spark's essence).
   affinity: Record<ElementId, number>;
   affinityElement: ElementId | null;
+  // Progressive resource reveal (v0.1.6): a resource id is marked `true` once the player
+  // has ever held > 0 of it (set engine-side in tick.step). The left panel shows a
+  // material/insight row only once discovered, and keeps showing it thereafter even if
+  // it's later spent back to 0. Gold is always seeded true (shown from the start).
+  discovered: Partial<Record<ResourceId, boolean>>;
   flags: Record<string, boolean>;
   chronicle: ChronicleEntry[];
 }
@@ -168,6 +173,7 @@ export function newGame(seed: number = seedFrom(Date.now())): GameState {
       strengthXp: 0,
       affinity: freshAffinity(),
       affinityElement: null,
+      discovered: { gold: true }, // Gold is always visible from the start (v0.1.6)
       flags: {},
       chronicle: [{ at: 0, text: 'You awaken, penniless, in the stable straw.' }],
     },
