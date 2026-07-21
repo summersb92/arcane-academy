@@ -11,8 +11,9 @@ describe('scenario expect: action-step outcome assertions', () => {
     const res = runScenario({
       seed: 1,
       steps: [
-        // 'clean-stables' is a free instant available at the Origin → succeeds.
-        { do: 'clean-stables', expect: 'ok' },
+        // 'begging' is a free instant available at the Origin → succeeds. (Clean Stables
+        // is now gated deep in the Odd-Jobs ladder — v0.1.4.)
+        { do: 'begging', expect: 'ok' },
         // 'study' is gated behind the spark (awakened flag) → refused pre-spark.
         { start: 'study', expect: 'refused' },
       ],

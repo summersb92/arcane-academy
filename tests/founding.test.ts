@@ -10,6 +10,7 @@ import { essenceBase, essenceRates } from '../src/engine/systems/essence';
 import {
   buyItem,
   equipItem,
+  equipGear,
   moveHome,
   homeResourceRates,
   effectiveCap,
@@ -37,8 +38,8 @@ function hedgeMage(seed = 1) {
 // ---------------------------------------------------------------------------
 // Contracts — the Renown source
 // ---------------------------------------------------------------------------
-describe('contracts (Renown source)', () => {
-  it('a fulfilled contract pays Renown ★ and Gold (nothing else generates Renown)', () => {
+describe('contracts (Gold source)', () => {
+  it('a fulfilled contract pays Gold only (v0.1.4: Renown + material drops stripped)', () => {
     const s = hedgeMage(1);
     expect(s.run.resources.renown).toBe(0);
 
@@ -46,22 +47,23 @@ describe('contracts (Renown source)', () => {
     simulate(s, 13); // one full cycle
 
     expect(s.run.tasks['ward-a-barn'].count).toBeGreaterThanOrEqual(1);
-    expect(s.run.resources.renown).toBeGreaterThan(0); // Renown accrued
-    expect(s.run.resources.gold).toBeGreaterThanOrEqual(10);
-    expect(s.run.resources.ironOre).toBeGreaterThanOrEqual(2); // material drop for fixtures
+    expect(s.run.resources.gold).toBeGreaterThanOrEqual(10); // Gold accrued
+    // No Renown and no material drops anymore — contracts are a pure Gold sink for essence.
+    expect(s.run.resources.renown).toBe(0);
+    expect(s.run.resources.ironOre).toBe(0);
   });
 
-  it('a contract is gated behind the spark (needs Fire) — refused before awakening', () => {
-    const s = newGame(2); // fresh: no skills, no Fire
+  it('a contract is gated behind the spark (needs an awakened essence) — refused before awakening', () => {
+    const s = newGame(2); // fresh: no skills, no essence
     expect(startTask(s, 'ward-a-barn')).toBe(false);
     expect(s.run.tasks['ward-a-barn']?.active ?? false).toBe(false);
-    expect(s.run.resources.renown).toBe(0);
+    expect(s.run.resources.gold).toBe(0);
   });
 
-  it('the bigger contract gates on a little Renown first', () => {
+  it('the bigger contract gates on Ward-a-Barn ×5 first (v0.1.4)', () => {
     const s = hedgeMage(3);
-    expect(startTask(s, 'cleanse-the-old-well')).toBe(false); // renown 0 < 6
-    s.run.resources.renown = 6;
+    expect(startTask(s, 'cleanse-the-old-well')).toBe(false); // 0 ward-a-barn completions
+    s.run.tasks['ward-a-barn'] = { active: false, progress: 0, paused: false, count: 5, repeat: false };
     expect(startTask(s, 'cleanse-the-old-well')).toBe(true);
   });
 
@@ -153,7 +155,7 @@ describe('view-model reflects equipped items', () => {
     const baseLifeRegen = s.run.vitals.life.regen; // 0.1 base
     s.run.resources.gold = 20;
     expect(buyItem(s, 'charm-of-vigor')).toBe(true);
-    expect(equipItem(s, 'charm-of-vigor')).toBe(true); // vagrant's single slot
+    expect(equipGear(s, 'charm-of-vigor')).toBe(true); // gear: worn on the amulet position
 
     // The published view shows base + item mod (0.1 + 0.05); the raw vital is untouched.
     expect(toView(s).vitals.life.regen).toBeCloseTo(baseLifeRegen + 0.05, 6);
@@ -280,32 +282,36 @@ describe('the Founding finale', () => {
 // ---------------------------------------------------------------------------
 // Tabs-as-eras unfold — the lair beat reveals Home
 // ---------------------------------------------------------------------------
-describe('the lair beat (Home reveal)', () => {
-  it('post-spark, earning a purse claims the lair and reveals the Home tab', () => {
+describe('the lair beat (Home reveal) — driven by Find Lodging (v0.1.5)', () => {
+  it('Find Lodging opens the Home tab (lairFounded) and moves into the Inn', () => {
     const s = newGame(12);
     s.run.flags.awakened = true; // spark already fired
     s.run.phase = 'awakened';
     expect(s.run.flags.lairFounded ?? false).toBe(false);
     expect(toView(s).tabs.find((t) => t.id === 'home')!.visible).toBe(false);
 
-    s.run.resources.gold = LAIR.goldThreshold; // trip the Gold arm (above the spark threshold)
-    runProgression(s);
+    s.run.caps.gold = 100; // as Coin Pouches would raise it, so 80 can be held
+    s.run.resources.gold = 80; // hold 80 Gold — the Find Lodging gate
+    expect(startTask(s, 'find-lodging')).toBe(true);
+    simulate(s, 5); // length 4 → completes
     expect(s.run.flags.lairFounded).toBe(true);
     expect(s.run.phase).toBe('lair');
+    expect(s.run.home.tier).toBe('inn');
     expect(toView(s).tabs.find((t) => t.id === 'home')!.visible).toBe(true);
   });
 
-  it('an idle player who only studied (has a cantrip) still claims the lair', () => {
+  it('the auto lair beat no longer fires — a cantrip or Gold alone does NOT claim the lair', () => {
     const s = newGame(13);
     s.run.flags.awakened = true;
     s.run.phase = 'awakened';
-    s.run.skills = ['read-the-page']; // learned a cantrip, no Gold
+    s.run.skills = ['read-the-page']; // learned the first cantrip…
+    s.run.resources.gold = LAIR.goldThreshold; // …and past the OLD auto Gold arm
     runProgression(s);
-    expect(s.run.flags.lairFounded).toBe(true);
-    expect(s.run.phase).toBe('lair');
+    expect(s.run.flags.lairFounded ?? false).toBe(false); // housing stays closed until Find Lodging
+    expect(toView(s).tabs.find((t) => t.id === 'home')!.visible).toBe(false);
   });
 
-  it('neither the spark nor the lair fires before their triggers', () => {
+  it('the spark still does not fire before its trigger', () => {
     const s = newGame(14);
     s.run.resources.gold = 20; // below the spark threshold (25); timer not elapsed
     runProgression(s);

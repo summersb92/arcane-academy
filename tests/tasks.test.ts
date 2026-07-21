@@ -13,24 +13,34 @@ import {
   listTaskInfo,
   taskInfo,
 } from '../src/engine/systems/tasks';
-import { buyItem, equipItem, moveHome, effectiveCap } from '../src/engine/systems/home';
+import { buyItem, equipItem, equipGear, moveHome, effectiveCap } from '../src/engine/systems/home';
 import { learnCantrip } from '../src/engine/systems/skills';
 import { TASK_BY_ID } from '../src/content/tasks';
 
+/** Unlock Clean Stables' gate (Find Work ×20) directly, so tests can exercise it. */
+function unlockCleanStables(s: ReturnType<typeof newGame>): void {
+  s.run.tasks['find-work'] = { active: false, progress: 0, paused: false, count: 20, repeat: false };
+}
+
 describe('instant tasks', () => {
-  it('Clean Stables pays Stamina and grants Gold, once per do', () => {
+  it('Clean Stables pays Stamina and grants Gold (base × Strength), once per do', () => {
     const s = newGame(1);
+    unlockCleanStables(s);
+    s.run.vitals.stamina.max = 20; // headroom for two 5-Stamina cycles
+    s.run.vitals.stamina.cur = 20;
+
     expect(doTask(s, 'clean-stables')).toBe(true);
-    expect(s.run.resources.gold).toBeCloseTo(0.25, 6); // v0.1.1: 0.25 (was 2.5)
-    expect(s.run.vitals.stamina.cur).toBeCloseTo(4, 6); // Stamina max 5, cost 1
+    expect(s.run.resources.gold).toBeCloseTo(2, 6); // base 2 × Strength 1.0 at the start
+    expect(s.run.vitals.stamina.cur).toBeCloseTo(15, 6); // cost 5
 
     doTask(s, 'clean-stables');
-    expect(s.run.resources.gold).toBeCloseTo(0.5, 6);
+    expect(s.run.resources.gold).toBeCloseTo(4, 6);
     expect(s.run.tasks['clean-stables'].count).toBe(2);
   });
 
   it('an instant task is refused when its cost is unaffordable', () => {
     const s = newGame(1);
+    unlockCleanStables(s);
     s.run.vitals.stamina.cur = 0;
     expect(doTask(s, 'clean-stables')).toBe(false);
     expect(s.run.resources.gold).toBe(0);
@@ -38,7 +48,7 @@ describe('instant tasks', () => {
 
   it('instant tasks never occupy an Activity slot', () => {
     const s = newGame(1);
-    doTask(s, 'clean-stables');
+    expect(doTask(s, 'begging')).toBe(true);
     expect(slotsUsed(s)).toBe(0);
   });
 });
@@ -68,22 +78,10 @@ describe('activity slots', () => {
     expect(slotsUsed(s)).toBe(2);
   });
 
-  it('the Limited "Widen the Study" upgrade raises slots 2 -> 3 and then locks (maxed)', () => {
+  it('activity slots stay at the starting 2 (Widen the Study removed in v0.1.5)', () => {
     const s = newGame(1);
-    s.run.resources.gold = 100;
     expect(activitySlots(s)).toBe(2);
-
-    expect(startTask(s, 'widen-study')).toBe(true); // pays Gold 40, occupies a slot while building
-    expect(s.run.resources.gold).toBeCloseTo(60, 6);
-    expect(slotsUsed(s)).toBe(1);
-
-    simulate(s, 7); // length is 6s
-    expect(activitySlots(s)).toBe(3);
-    expect(s.run.tasks['widen-study'].count).toBe(1);
-    expect(s.run.tasks['widen-study'].active).toBe(false); // freed its slot on completion
-    expect(slotsUsed(s)).toBe(0);
-
-    expect(startTask(s, 'widen-study')).toBe(false); // Max reached → locked
+    expect(TASK_BY_ID['widen-study']).toBeUndefined(); // task removed
   });
 });
 
@@ -223,20 +221,20 @@ describe('limited start-cost rate (display fix)', () => {
 describe('card reveal (display-only)', () => {
   it('a far-locked task is hidden; a one-away task is revealed', () => {
     const s = newGame(1);
-    // Cleanse the Old Well needs BOTH Spark AND Renown ≥ 6 — 2 unmet reqs at the
-    // Origin → far-locked → hidden.
+    // Cleanse the Old Well needs BOTH Spark AND Ward-a-Barn ×5 — 2 unmet reqs at the
+    // Origin → far-locked → hidden (v0.1.4: the Renown gate is gone).
     expect(taskInfo(s, TASK_BY_ID['cleanse-the-old-well']).revealed).toBe(false);
 
-    // Satisfy one of the two (Renown) → now exactly one requirement away → revealed.
-    s.run.resources.renown = 6;
+    // Satisfy one of the two (Spark) → now exactly one requirement away → revealed.
+    s.run.skills = ['read-the-page', 'spark'];
     expect(taskInfo(s, TASK_BY_ID['cleanse-the-old-well']).revealed).toBe(true);
 
     // Scribe Scroll has ONE requirement now (Read the Page) → one-away → revealed
     // even at the Origin (v0.1.2).
     expect(taskInfo(s, TASK_BY_ID['scribe-scroll']).revealed).toBe(true);
 
-    // find-work has ONE requirement (clean-stables ×20) → one-away → revealed even
-    // before it's actually unlocked.
+    // find-work has ONE requirement (begging ×20) → one-away → revealed even
+    // before it's actually unlocked (v0.1.4 ladder reorder).
     expect(taskInfo(s, TASK_BY_ID['find-work']).revealed).toBe(true);
 
     // begging has no requirements → always revealed.
@@ -247,8 +245,8 @@ describe('card reveal (display-only)', () => {
     const s = newGame(1);
     const info = taskInfo(s, TASK_BY_ID['find-work']);
     expect(info.revealed).toBe(true);
-    expect(info.locked).toBe(true); // clean-stables ×20 not met
-    expect(doTask(s, 'find-work')).toBe(false); // gating unchanged
+    expect(info.locked).toBe(true); // begging ×20 not met
+    expect(startTask(s, 'find-work')).toBe(false); // gating unchanged (find-work is now a running job)
   });
 });
 
@@ -270,10 +268,12 @@ describe('Storage upgrades: Coin Pouch (gold cap) & Notebook (insight cap)', () 
     expect(s.run.resources.gold).toBe(50); // clamped to the raised cap (excess lost)
   });
 
-  it('building a Notebook raises the Insight cap 5 → 10', () => {
+  it('building a Notebook raises the Insight cap 5 → 10 (gated on the spark now, v0.1.5)', () => {
     const s = newGame(1);
     expect(s.run.caps.insight).toBe(5); // base cap (v0.1.2)
     s.run.resources.gold = 100;
+    expect(startTask(s, 'notebook')).toBe(false); // hidden + gated until awakened (v0.1.5)
+    s.run.flags.awakened = true; // the spark fires
     expect(startTask(s, 'notebook')).toBe(true); // pays Gold 20, length 3
     simulate(s, 4);
     expect(s.run.caps.insight).toBe(10); // 5 + 5
@@ -312,7 +312,8 @@ describe('Odd Jobs: Tool Belt job-output multiplier', () => {
     const s = newGame(1);
     s.run.resources.gold = 40;
     expect(buyItem(s, 'tool-belt')).toBe(true);
-    expect(equipItem(s, 'tool-belt')).toBe(true); // vagrant has 1 slot
+    expect(equipItem(s, 'tool-belt')).toBe(false); // gear can't go in a housing slot…
+    expect(equipGear(s, 'tool-belt')).toBe(true); // …it's worn on the paper doll's belt
 
     // Begging is a job (base +0.1 Gold) → ×1.2 = 0.12.
     s.run.resources.gold = 0;
@@ -366,5 +367,87 @@ describe('Inn rent', () => {
     s.run.resources.gold = 10;
     step(s, 1); // rent 0.1/s
     expect(s.run.resources.gold).toBeCloseTo(9.9, 6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.1.5 — secret reveal, element-job tools, Find Lodging
+// ---------------------------------------------------------------------------
+describe('secret reveal (v0.1.5)', () => {
+  it('a secret task stays hidden until its gate is met — no "one-away" leniency', () => {
+    const s = newGame(1);
+    // Notebook is SECRET, gated on `awakened`. Its single requirement being one-away does
+    // NOT reveal it (secret cards get no leniency) → hidden before the spark.
+    expect(taskInfo(s, TASK_BY_ID['notebook']).revealed).toBe(false);
+
+    // Contrast: find-work is NON-secret with one unmet requirement (begging ×20) → the
+    // ordinary "one-away is revealed" rule applies → revealed, but still locked.
+    const fw = taskInfo(s, TASK_BY_ID['find-work']);
+    expect(fw.revealed).toBe(true);
+    expect(fw.locked).toBe(true);
+  });
+
+  it('the secret Notebook stays hidden until `awakened`, then is revealed', () => {
+    const s = newGame(1);
+    expect(taskInfo(s, TASK_BY_ID['notebook']).revealed).toBe(false); // pre-spark → hidden
+    s.run.flags.awakened = true; // the spark fires
+    expect(taskInfo(s, TASK_BY_ID['notebook']).revealed).toBe(true); // gate met → revealed
+  });
+});
+
+describe('element-job tools (v0.1.5)', () => {
+  it("building Smith's Hammer boosts Smith's Gold ×1.5; a job without its tool is unaffected", () => {
+    const s = newGame(1);
+    s.run.vitals.stamina.max = 100;
+    s.run.vitals.stamina.cur = 100;
+    s.run.vitals.stamina.regen = 5; // headroom so nothing auto-pauses
+
+    // The Hammer is SECRET, gated on Smith ×5 → hidden until the job's been worked a bit.
+    expect(taskInfo(s, TASK_BY_ID['forge-hammer']).revealed).toBe(false);
+    s.run.tasks['smith'] = { active: false, progress: 0, paused: false, count: 5, repeat: false };
+    expect(taskInfo(s, TASK_BY_ID['forge-hammer']).revealed).toBe(true);
+
+    // Build the Hammer (Gold 40, length 4) — a one-off Limited purchase. Raise the Gold
+    // cap first (as Coin Pouches would) so the tick doesn't clamp the funding hoard.
+    s.run.caps.gold = 100;
+    s.run.resources.gold = 100;
+    expect(startTask(s, 'forge-hammer')).toBe(true);
+    simulate(s, 5);
+    expect(s.run.tasks['forge-hammer'].count).toBe(1);
+    expect(s.run.resources.gold).toBeCloseTo(60, 6); // paid Gold 40
+
+    // A Smith cycle now pays base 5 × 1.5 = 7.5 (the tool boost flows through completeCycle).
+    s.run.resources.gold = 0;
+    expect(startTask(s, 'smith')).toBe(true);
+    simulate(s, 16); // one 15s cycle
+    expect(s.run.resources.gold).toBeCloseTo(7.5, 6);
+    stopTask(s, 'smith');
+
+    // Haul the Catch (Water) has no tool built → unaffected, base 5.
+    s.run.resources.gold = 0;
+    expect(startTask(s, 'haul-the-catch')).toBe(true);
+    simulate(s, 14); // one 13s cycle
+    expect(s.run.resources.gold).toBeCloseTo(5, 6);
+  });
+});
+
+describe('find-lodging (v0.1.5)', () => {
+  it('gated at Gold ≥ 80; completing it sets lairFounded and moves home to the Inn', () => {
+    const s = newGame(1);
+    expect(s.run.flags.lairFounded ?? false).toBe(false);
+    expect(s.run.home.tier).toBe('vagrant');
+    s.run.caps.gold = 100; // as Coin Pouches would raise it, so 80 can be held
+
+    s.run.resources.gold = 79;
+    expect(startTask(s, 'find-lodging')).toBe(false); // must HOLD 80 Gold
+
+    s.run.resources.gold = 80;
+    expect(startTask(s, 'find-lodging')).toBe(true); // no Gold cost itself — just the gate
+    expect(s.run.resources.gold).toBe(80); // find-lodging spends no Gold
+
+    simulate(s, 5); // length 4 → completes
+    expect(s.run.tasks['find-lodging'].count).toBe(1);
+    expect(s.run.flags.lairFounded).toBe(true);
+    expect(s.run.home.tier).toBe('inn');
   });
 });

@@ -15,6 +15,7 @@ import { AMOUNT_LABEL } from '../../content/tasks';
 import type { ElementId, GameState } from '../state';
 import { logEvent } from './chronicle';
 import { effectiveCap } from './home';
+import { dominantAffinity } from './player';
 
 const EPS = 1e-9;
 
@@ -51,6 +52,17 @@ function applyCantripEffect(state: GameState, e: Cantrip['effects'][number]): vo
       const ess = state.run.essence[e.element];
       if (ess) ess.awakened = true;
       logEvent(state, `${AMOUNT_LABEL[e.element] ?? e.element} essence awakens — it begins to trickle.`, 'ev');
+      break;
+    }
+    case 'awakenAffinity': {
+      // Awaken the DOMINANT affinity element (v0.1.4). Set run.affinityElement once — it
+      // then resolves the 'affinity' essence sentinel in contract costs. Defaults to Fire
+      // when no element work has been done (dominantAffinity all-zero → 'fire').
+      const el = dominantAffinity(state);
+      const ess = state.run.essence[el];
+      if (ess) ess.awakened = true;
+      if (state.run.affinityElement == null) state.run.affinityElement = el;
+      logEvent(state, `${AMOUNT_LABEL[el] ?? el} essence awakens — it begins to trickle.`, 'ev');
       break;
     }
     case 'vitalRegen':
@@ -116,12 +128,19 @@ export interface CantripInfo {
   effectText: string; // engine-side human summary ("awakens Fire essence (+0.2/s)")
 }
 
-function effectText(def: Cantrip): string {
+function effectText(state: GameState, def: Cantrip): string {
   const parts = def.effects
     .map((e) => {
       switch (e.kind) {
         case 'awaken':
           return `awakens ${AMOUNT_LABEL[e.element] ?? e.element} essence (+${e.trickle}/s)`;
+        case 'awakenAffinity': {
+          // Once awakened the element is LOCKED (affinityElement); before that, preview the
+          // current dominant affinity. So an owned Spark card keeps naming the element it
+          // actually opened even if the player later grinds a different element.
+          const el = state.run.affinityElement ?? dominantAffinity(state);
+          return `awakens ${AMOUNT_LABEL[el] ?? 'your'} essence (+${e.trickle}/s)`;
+        }
         case 'vitalRegen':
           return `+${e.amount} ${AMOUNT_LABEL[e.vital] ?? e.vital} regen`;
         case 'unlockVital':
@@ -142,9 +161,18 @@ export function cantripInfo(state: GameState, def: Cantrip): CantripInfo {
   const owned = isLearned(state, def.id);
   const missingPrereqs = def.requires.filter((r) => !isLearned(state, r));
   const status: CantripStatus = owned ? 'owned' : missingPrereqs.length ? 'locked' : 'available';
-  const awakensElement = def.effects.find((e) => e.kind === 'awaken') as
+  // The element a card advertises: a fixed `awaken` names it directly; an `awakenAffinity`
+  // resolves to the current dominant affinity (Fire by default) so the card colours/labels
+  // track the element the spark will actually open.
+  const fixedAwaken = def.effects.find((e) => e.kind === 'awaken') as
     | { kind: 'awaken'; element: ElementId; trickle: number }
     | undefined;
+  const hasAffinityAwaken = def.effects.some((e) => e.kind === 'awakenAffinity');
+  const awakensElement: ElementId | undefined = fixedAwaken
+    ? fixedAwaken.element
+    : hasAffinityAwaken
+      ? (state.run.affinityElement ?? dominantAffinity(state))
+      : undefined;
   const scrollCost = def.scrollCost ?? 0;
   const hasScroll = (state.run.resources.scroll ?? 0) >= scrollCost - EPS;
   const insightEnough = state.run.resources.insight >= def.cost - EPS;
@@ -160,8 +188,8 @@ export function cantripInfo(state: GameState, def: Cantrip): CantripInfo {
     affordable: insightEnough && hasScroll,
     exceedsCap: exceedsCap(state, def),
     missingPrereqs,
-    awakensElement: awakensElement?.element,
-    effectText: effectText(def),
+    awakensElement,
+    effectText: effectText(state, def),
   };
 }
 

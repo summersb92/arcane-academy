@@ -4,12 +4,13 @@
 //
 // The Act I beats, in order (each idempotent — a cheap flag-guarded no-op once done):
 //   1. the spark   (Origin → Awakening)  — reveals Skills + un-gates Study
-//   2. the lair    (Awakening → Hedge-Mage) — reveals the Home tab (fixtures + Founding)
-//   3. the Founding (Hedge-Mage → Founded)  — set by the found-academy task; flips phase
+//   2. the Founding (Hedge-Mage → Founded)  — set by the found-academy task; flips phase
 //                                             + writes the celebratory finale, un-greys Academy
+// The lair beat (Awakening → Hedge-Mage, revealing the Home tab) is NO LONGER automatic
+// (v0.1.5): it is driven by the Find Lodging task (beginLodging effect). See the note below.
 // Plus a couple of one-shot Chronicle NUDGES (spec §3.14 light guidance — no tutorial).
 
-import { LAIR, SPARK } from '../../content/config';
+import { SPARK, SHOW_FOUNDING } from '../../content/config';
 import type { GameState } from '../state';
 import { logEvent } from './chronicle';
 import { foundingStatus, foundingSummaryLine } from './founding';
@@ -37,20 +38,9 @@ function checkSpark(state: GameState): void {
   }
 }
 
-/** The lair beat: post-spark, once you have a little coin OR your first cantrip, you
- *  claim a corner as a lair — revealing the Home tab (fixtures + the Founding card). */
-function checkLair(state: GameState): void {
-  if (state.run.flags.lairFounded) return;
-  const earnedSomething = (state.run.resources.gold ?? 0) >= LAIR.goldThreshold || (state.run.skills?.length ?? 0) >= 1;
-  if (!earnedSomething) return;
-  state.run.flags.lairFounded = true;
-  if (state.run.phase === 'awakened') state.run.phase = 'lair';
-  logEvent(
-    state,
-    'You sweep out a corner of the hay-loft and call it a lair. (Home unlocked — furnish it, take contracts, and one day found an Academy.)',
-    'found',
-  );
-}
+// NOTE (v0.1.5): the automatic lair beat was REMOVED. Housing now opens ONLY via the
+// Find Lodging task (content/tasks.ts → beginLodging effect), which sets lairFounded and
+// moves the player into the Inn. The spark/`awakened` beat below is independent and stays.
 
 /** The Founding finale: the found-academy task sets `founded`; here we flip the phase
  *  and write the defining beat, which un-greys the Academy tab (per toView). */
@@ -84,8 +74,9 @@ function runHints(state: GameState): void {
     logEvent(state, 'Insight is full — spend it: learn a cantrip, or raise the cap with the Grand Library.', 'ev');
   }
 
-  // Founding partly met → surface the one-line "what's left" (once).
-  if (!f.hintFounding && f.lairFounded === true) {
+  // Founding partly met → surface the one-line "what's left" (once). Suppressed while the
+  // Founding is hidden (SHOW_FOUNDING) so no Founding language leaks into the chronicle.
+  if (SHOW_FOUNDING && !f.hintFounding && f.lairFounded === true) {
     const st = foundingStatus(state);
     if (st.metCount >= 1 && !st.allMet) {
       f.hintFounding = true;
@@ -100,7 +91,6 @@ function runHints(state: GameState): void {
  */
 export function runProgression(state: GameState): void {
   if (!isAwakened(state)) checkSpark(state);
-  checkLair(state);
   checkFounding(state);
   runHints(state);
 }

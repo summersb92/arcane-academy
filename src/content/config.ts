@@ -15,12 +15,10 @@ export const SPARK = {
 };
 
 /**
- * The lair beat (Awakening → Hedge-Mage, spec §3.12): a DISTINCT beat AFTER the
- * spark — once you've begun practising (learned your first cantrip) OR earned a
- * purse beyond the spark's threshold, you claim a corner as a lair, revealing the
- * Home tab (fixtures + the Founding card). The Gold arm sits above SPARK.goldThreshold
- * (25) so crossing the spark can't also trip the lair in the same tick; a purely
- * idle player who only studies trips the cantrip arm instead. Guaranteed either way.
+ * The lair beat threshold. NOTE (v0.1.5): the AUTOMATIC lair beat was removed —
+ * housing now opens only via the Find Lodging task (which requires holding 80 Gold).
+ * This const is no longer read by systems/progression.ts; it is retained for reference
+ * (and still imported by a regression test asserting the auto-beat no longer fires).
  */
 export const LAIR = {
   goldThreshold: 40,
@@ -43,6 +41,18 @@ export const FOUNDING = {
   siteCost: 70, // ⦿ to claim the Ruined Tower (the big Gold sink → your Grounds; ≤ 100 cap)
 };
 
+// The Academy Founding (the old v0.1 finale) is HIDDEN for now — its whole UI (the
+// Academy tab, the Home "Founding" goal card + its tasks, and related flavour) is
+// gated off until it's unveiled later (~Act 4). The engine/content + tests stay intact;
+// flip this to true to bring it all back.
+export const SHOW_FOUNDING = false;
+
+// Renown ★ is HIDDEN for now (v0.1.4) — contracts no longer grant it and nothing in Act I
+// consumes it, so its UI (the Player-tab Renown readout, any Renown hints) is gated off
+// until it's reintroduced later. The `renown` resource stays in the engine/state untouched
+// (deferred, not removed); flip this to true to surface it again.
+export const SHOW_RENOWN = false;
+
 export const STARTING = {
   gold: 0,
   insight: 0,
@@ -54,7 +64,7 @@ export const STARTING = {
   goldCap: 25, // BASE Gold cap (v0.1.2) — raised by building Coin Pouch upgrade tasks (max 100)
   insightCap: 5, // BASE Insight cap (v0.1.2) — raised by building Notebook upgrade tasks (max 20)
   materialCap: 50, // BASE cap on each material (moonpetal / ironOre / spiritDust) — raised by Warded Chest
-  activitySlots: 2, // continuous-task capacity at the Origin (raised to 3 by "Widen the Study")
+  activitySlots: 2, // continuous-task capacity at the Origin
   // Vitals rework (v0.1.1): tighter Life/Stamina, and Mana LOCKED (max 0 / regen 0)
   // until the "Inner Wellspring" cantrip unlocks it.
   life: { cur: 10, max: 10, regen: 0.1 },

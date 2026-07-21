@@ -27,6 +27,10 @@ export function essenceBase(state: GameState): Partial<Record<ElementId, number>
     for (const e of def.effects) {
       if (e.kind === 'awaken' && state.run.essence[e.element]?.awakened) {
         base[e.element] = (base[e.element] ?? 0) + e.trickle;
+      } else if (e.kind === 'awakenAffinity') {
+        // v0.1.4: the trickle feeds the awakened affinity element (Fire by default).
+        const el = state.run.affinityElement ?? 'fire';
+        if (state.run.essence[el]?.awakened) base[el] = (base[el] ?? 0) + e.trickle;
       }
     }
   }

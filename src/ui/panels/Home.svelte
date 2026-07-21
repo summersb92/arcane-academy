@@ -6,6 +6,7 @@
   // Founding still lives here as normal home-panel tasks (panel:'home').
   import {
     game,
+    activeTab,
     dispatchTask,
     moveHome,
     buyItem,
@@ -19,6 +20,7 @@
   } from '../stores';
   import type { TaskView } from '../stores';
   import { fmt } from '../format';
+  import { SHOW_FOUNDING } from '../../content/config';
 
   function onKey(e: KeyboardEvent, t: TaskView): void {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -39,8 +41,8 @@
 <section>
   <h2>Home · The Lair</h2>
   <div class="sub">
-    Your dwelling and belongings. Move up through housing tiers for more item slots, equip items for passive
-    bonuses, then work toward the Founding — the goal that ends Act I.
+    Your dwelling and belongings. Move up through housing tiers for more item slots, and equip items for
+    passive bonuses.
   </div>
 
   <!-- Current residence -->
@@ -88,7 +90,10 @@
 
   <!-- Equippable items -->
   <h2 class="mt">
-    Items <span class="tag" style="font-weight:400">· buy once, equip into a slot ({home.used}/{home.slots} used)</span>
+    Items
+    <span class="tag" style="font-weight:400"
+      >· buy once — gear equips on the Player tab; furnishings use home slots ({home.used}/{home.slots} used)</span
+    >
   </h2>
   <div class="hgrid">
     {#each home.items as it (it.id)}
@@ -125,6 +130,11 @@
               on:focus={(e) => openTip(e, homeItemTooltip(it))}
               on:blur={hideTooltip}
             >Buy</button>
+          {:else if it.gear}
+            <!-- Gear (paper doll) is equipped on the Player tab — the generic equip path rejects it. -->
+            <button class="link" type="button" on:click={() => activeTab.set('player')}>
+              {it.equipped ? 'Manage on the Player tab →' : 'Equip on the Player tab →'}
+            </button>
           {:else if it.equipped}
             <button
               class="btn"
@@ -148,7 +158,8 @@
     {/each}
   </div>
 
-  <!-- The Founding: the persistent goal card + its tasks -->
+  <!-- The Founding: hidden until unveiled (~Act 4) — see SHOW_FOUNDING. -->
+  {#if SHOW_FOUNDING}
   <h2 class="mt">The Founding</h2>
   <div class="card found" class:done={f.founded}>
     <div class="tt">
@@ -250,6 +261,7 @@
       </div>
     {/each}
   </div>
+  {/if}
 </section>
 
 <style>
@@ -318,6 +330,24 @@
     opacity: 0.5;
     cursor: not-allowed;
     border-color: var(--edge);
+  }
+  /* Gear cards point to the Player tab for equipping (no generic equip control here). */
+  .link {
+    padding: 0;
+    background: none;
+    border: 0;
+    color: var(--accent);
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .link:hover {
+    text-decoration: underline;
+  }
+  .link:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
   /* --- Founding card (unchanged from the previous Home layout) --- */
   .found {

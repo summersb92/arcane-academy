@@ -16,6 +16,7 @@ import { CANTRIP_BY_ID } from '../../content/cantrips';
 import { ELEMENTS, type ElementId, type GameState, type ResourceId } from '../state';
 import { outputMult } from './skills';
 import { effectiveCap, effectiveRegen, homeRateContribs, homeTier, jobOutputMult } from './home';
+import { resolveAffinityId } from './tasks';
 
 const EPS = 1e-9;
 
@@ -155,24 +156,31 @@ function essenceBreakdown(state: GameState, id: ElementId): Breakdown {
   const produces: BreakdownEntry[] = [];
   const consumes: BreakdownEntry[] = [];
 
-  // Cantrip trickles that awakened this element.
+  // Cantrip trickles that awakened this element (fixed `awaken`, or an `awakenAffinity`
+  // whose resolved element is this one).
   for (const sid of state.run.skills ?? []) {
     const def = CANTRIP_BY_ID[sid];
     if (!def) continue;
     for (const e of def.effects) {
       if (e.kind === 'awaken' && e.element === id) produces.push({ name: def.name, amount: e.trickle });
+      else if (e.kind === 'awakenAffinity' && (state.run.affinityElement ?? 'fire') === id) {
+        produces.push({ name: def.name, amount: e.trickle });
+      }
     }
   }
   // Home essence producers (Hearth Stone → Fire, Wayfarer Tent → Air).
   for (const c of homeRateContribs(state)) {
     if (c.target === id && c.amount > EPS) produces.push({ name: c.name, amount: c.amount });
   }
-  // Contracts burn essence per second while active (Ward a Barn / Cleanse → Fire).
+  // Contracts burn essence per second while active. Their cost id may be the 'affinity'
+  // sentinel — resolve it to the real element so the drain lands on the right essence.
   for (const def of TASKS) {
     const rt = state.run.tasks?.[def.id];
     if (!rt?.active || rt.paused) continue;
     let cons = 0;
-    for (const c of def.runCost ?? []) if (c.pool === 'essence' && c.id === id) cons += c.amount;
+    for (const c of def.runCost ?? []) {
+      if (c.pool === 'essence' && resolveAffinityId(state, c.id) === id) cons += c.amount;
+    }
     if (cons > EPS) consumes.push({ name: def.name, amount: cons });
   }
 

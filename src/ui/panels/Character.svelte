@@ -49,6 +49,18 @@
     <div class="mtr locked"></div>
   {/if}
 
+  <h2 class="mt">Attributes</h2>
+  <div
+    class="row"
+    title="Strength grows from physical labour (mucking stables) and multiplies the Gold that hard graft pays."
+  >
+    <span class="nm">💪 Strength</span>
+    <span>
+      <span class="vl">×{$game.player.strength.toFixed(2)}</span>
+      <span class="rt reg">Lv {$game.player.strengthLevel}</span>
+    </span>
+  </div>
+
   <h2 class="mt">Essence</h2>
   {#each $game.essence as e (e.id)}
     <!-- svelte-ignore a11y-no-static-element-interactions -->

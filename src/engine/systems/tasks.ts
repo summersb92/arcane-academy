@@ -32,14 +32,46 @@ import { drawRng } from '../rng';
 import { logEvent } from './chronicle';
 import { outputMult } from './skills';
 import { effectiveCap, jobOutputMult } from './home';
+import { strength, addStrengthXp } from './player';
+
+/** Strength XP earned per completion of a physical-labour (strengthScaled) task. */
+const STRENGTH_XP_PER_LABOR = 1;
+
+/** Resolve the 'affinity' essence sentinel to the awakened affinity element (or 'fire'
+ *  when unset). Any other id passes through unchanged. Exported so the breakdown read
+ *  model resolves contract essence costs the same way the sim does. */
+export function resolveAffinityId(state: GameState, id: AmountId): AmountId {
+  return id === 'affinity' ? state.run.affinityElement ?? 'fire' : id;
+}
 
 const RESOURCE_IDS: ResourceId[] = ['gold', 'insight', 'renown', 'moonpetal', 'ironOre', 'spiritDust', 'scroll'];
 const EPS = 1e-9;
 
+/** The element-TOOL multiplier for an element (v0.1.5): 1 + Σ toolBoost.mult over every
+ *  OWNED tool task (count > 0) whose toolBoost targets this element. Derived purely from
+ *  task counts — no new persistent state. A player with no matching tool gets ×1. */
+export function elementToolMult(state: GameState, element: ElementId): number {
+  let m = 1;
+  for (const def of TASKS) {
+    const boost = def.toolBoost;
+    if (boost && boost.element === element && peekRuntime(state, def.id).count > 0) {
+      m += boost.mult;
+    }
+  }
+  return m;
+}
+
 /** Total output multiplier for a task: the global Kindle Focus mult, plus the Tool
- *  Belt's job-output mult for Odd Jobs (`job:true`) only. */
+ *  Belt's job-output mult for Odd Jobs (`job:true`), plus the Strength stat for
+ *  strength-scaled physical labour (Clean Stables), plus the element-TOOL boost for an
+ *  element-tagged job (Smith's Hammer → Smith, etc.) — all applied multiplicatively. */
 function taskOutputScale(state: GameState, def: TaskDef): number {
-  return outputMult(state) * (def.job ? jobOutputMult(state) : 1);
+  return (
+    outputMult(state) *
+    (def.job ? jobOutputMult(state) : 1) *
+    (def.strengthScaled ? strength(state) : 1) *
+    (def.element ? elementToolMult(state, def.element) : 1)
+  );
 }
 
 // ---- derived read model (no display strings — the UI/CLI format these) ----
@@ -68,7 +100,7 @@ function poolCur(state: GameState, pool: Pool, id: AmountId): number {
     case 'vital':
       return state.run.vitals[id as VitalId].cur;
     case 'essence':
-      return state.run.essence[id as ElementId].amount;
+      return state.run.essence[resolveAffinityId(state, id) as ElementId].amount;
   }
 }
 
@@ -85,7 +117,7 @@ function addPool(state: GameState, a: Amount, scale: number): void {
       break;
     }
     case 'essence':
-      state.run.essence[a.id as ElementId].amount += delta;
+      state.run.essence[resolveAffinityId(state, a.id) as ElementId].amount += delta;
       break;
   }
 }
@@ -189,6 +221,16 @@ function applyEffect(state: GameState, e: TaskEffect): void {
       }
       break;
     }
+    case 'beginLodging': {
+      // Find Lodging (v0.1.5) is the SOLE entry point to housing now (the auto lair beat
+      // was removed): reveal the Home tab (lairFounded) and move into the Inn directly.
+      // Further moves use the normal Home UI; this is the special entry point.
+      state.run.flags.lairFounded = true;
+      if (state.run.phase === 'origin' || state.run.phase === 'awakened') state.run.phase = 'lair';
+      if (state.run.home) state.run.home.tier = 'inn';
+      logEvent(state, "You take a room at the inn — a roof, a bed, and a landlord's tab.", 'found');
+      break;
+    }
   }
 }
 
@@ -226,6 +268,16 @@ function grantRandomOutput(state: GameState, def: TaskDef): void {
   logEvent(state, `${def.name}: +${amount} ${AMOUNT_LABEL[chosen] ?? chosen}.`, 'ev');
 }
 
+/** Completion side-effects shared by instant (doTask) and timed (completeCycle) paths:
+ *  bump the hidden per-element affinity for an element-tagged task, and train Strength
+ *  for physical (strengthScaled) labour. Called once per completion, after output. */
+function onCompletion(state: GameState, def: TaskDef): void {
+  if (def.element && state.run.affinity) {
+    state.run.affinity[def.element] = (state.run.affinity[def.element] ?? 0) + 1;
+  }
+  if (def.strengthScaled) addStrengthXp(state, STRENGTH_XP_PER_LABOR);
+}
+
 // ---- per-step advance ----
 /** Grant one cycle's output, bump count, run completion effects, chronicle it. */
 function completeCycle(state: GameState, def: TaskDef, rt: TaskRuntime): void {
@@ -233,6 +285,7 @@ function completeCycle(state: GameState, def: TaskDef, rt: TaskRuntime): void {
   applyAmounts(state, outs, taskOutputScale(state, def)); // Kindle Focus + Tool Belt (jobs)
   grantRandomOutput(state, def);
   rt.count += 1;
+  onCompletion(state, def);
   if (def.effects) for (const e of def.effects) applyEffect(state, e);
   if (outs.length || !def.randomOutput) logEvent(state, completionText(def, outs), 'ev');
 }
@@ -319,6 +372,7 @@ export function doTask(state: GameState, id: string): boolean {
   applyAmounts(state, outs, taskOutputScale(state, def)); // Kindle Focus + Tool Belt (jobs)
   grantRandomOutput(state, def);
   rt.count += 1;
+  onCompletion(state, def);
   if (def.effects) for (const e of def.effects) applyEffect(state, e);
   if (outs.length || !def.randomOutput) logEvent(state, completionText(def, outs), 'ev');
   return true;
@@ -389,8 +443,15 @@ function resourceCap(state: GameState, id: ResourceId): number {
  *  +0/s instead of the phantom +0.55/s the T-004 review flagged. */
 function netPerSecond(state: GameState, def: TaskDef): Partial<Record<AmountId, number>> {
   const net: Partial<Record<AmountId, number>> = {};
-  const mult = outputMult(state);
-  const add = (id: AmountId, v: number): void => {
+  // Scale OUTPUT by the full task-output multiplier (Kindle + Tool Belt job mult +
+  // Strength + element-tool boost) so the card's rate/payoff readout matches what a
+  // real cycle actually pays — otherwise a bought tool looks like a no-op on its job.
+  // Costs stay unscaled below.
+  const mult = taskOutputScale(state, def);
+  // Resolve the 'affinity' essence sentinel to the real awakened element so the rate
+  // readout attributes a contract's essence drain to the element it actually spends.
+  const add = (rawId: AmountId, v: number): void => {
+    const id = resolveAffinityId(state, rawId);
     net[id] = (net[id] ?? 0) + v;
   };
   if (def.type === 'perpetual') {
@@ -423,9 +484,14 @@ export function taskInfo(state: GameState, def: TaskDef): TaskInfo {
   const rt = peekRuntime(state, def.id);
   const maxed = def.type === 'limited' && rt.count >= (def.max ?? 1);
   const locked = !requirementsMet(state, def) || maxed;
-  // Reveal (display-only): active, ever done, requirements met, or at most one
-  // requirement away. Far-locked cards (≥2 unmet) stay hidden until they're close.
-  const revealed = rt.active || rt.count > 0 || unmetRequirementCount(state, def) <= 1;
+  // Reveal (display-only): active or ever done → always shown. Otherwise a SECRET card
+  // (v0.1.5) stays fully hidden until its requirements are ACTUALLY met (no leniency);
+  // a non-secret card keeps the ordinary rule: revealed once requirements are met OR at
+  // most one requirement away. Far-locked cards (≥2 unmet) stay hidden until they're close.
+  const revealed =
+    rt.active ||
+    rt.count > 0 ||
+    (def.secret ? requirementsMet(state, def) : unmetRequirementCount(state, def) <= 1);
   const affordable = canAfford(state, def.startCost, 1);
   const cont = isContinuous(def);
   const freeSlots = activitySlots(state) - slotsUsed(state);
@@ -435,7 +501,9 @@ export function taskInfo(state: GameState, def: TaskDef): TaskInfo {
   let pausedResourceId: AmountId | undefined;
   if (rt.active && rt.paused && def.runCost) {
     const bad = def.runCost.find((c) => poolCur(state, c.pool, c.id) < c.amount - EPS);
-    pausedResourceId = bad?.id;
+    // Resolve the 'affinity' sentinel to the real awakened element so the auto-pause
+    // hint reads "needs ▼ Water", not the raw sentinel id.
+    pausedResourceId = bad ? resolveAffinityId(state, bad.id) : undefined;
   }
 
   return {

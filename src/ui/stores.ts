@@ -8,8 +8,20 @@ import { createAccumulator } from '../engine/tick';
 import { newGame, type GameState, ELEMENTS, type ElementId, type ResourceId, type VitalId } from '../engine/state';
 import { breakdown, type Breakdown } from '../engine/systems/breakdown';
 import { AMOUNT_LABEL, TASKS, type Amount, type Requirement, type TaskDef, type TaskType } from '../content/tasks';
+import { SHOW_FOUNDING } from '../content/config';
 import { CANTRIP_BY_ID } from '../content/cantrips';
-import { HOME_ITEMS, HOME_TIERS, HOME_TIER_BY_ID, type Modifier } from '../content/home';
+import {
+  EQUIP_POSITIONS,
+  EQUIP_POSITION_LABEL,
+  HOME_ITEMS,
+  HOME_ITEM_BY_ID,
+  HOME_TIERS,
+  HOME_TIER_BY_ID,
+  type EquipPosition,
+  type EquipSlotType,
+  type HomeItem,
+  type Modifier,
+} from '../content/home';
 import {
   listTaskInfo,
   taskRates,
@@ -17,6 +29,7 @@ import {
   activitySlots,
   canAfford,
   meetsRequirements,
+  resolveAffinityId,
   doTask,
   startTask,
   stopTask,
@@ -24,7 +37,7 @@ import {
   type TaskInfo,
 } from '../engine/systems/tasks';
 import { learnCantrip as engineLearnCantrip, listCantripInfo, outputMult } from '../engine/systems/skills';
-import { setName as engineSetName } from '../engine/systems/player';
+import { setName as engineSetName, strength as engineStrength, strengthLevel as engineStrengthLevel } from '../engine/systems/player';
 import { essenceRates } from '../engine/systems/essence';
 import {
   homeTier,
@@ -37,6 +50,10 @@ import {
   buyItem as engineBuyItem,
   equipItem as engineEquipItem,
   unequipItem as engineUnequipItem,
+  equipGear as engineEquipGear,
+  unequipGear as engineUnequipGear,
+  unequipBeltItem as engineUnequipBeltItem,
+  isGearEquipped,
 } from '../engine/systems/home';
 import { canFound, foundingStatus } from '../engine/systems/founding';
 import type { OfflineSummary } from '../engine/offline';
@@ -128,6 +145,11 @@ export interface PlayerView {
   title: string; // earned honorific ('Waif' at the Origin)
   renown: number; // ★ Renown (mirrored here; also stays in resources for now)
   needsNaming: boolean; // true on a fresh game / post-reset / old save → prompt for a name
+  // Strength stat (v0.1.4) for the Character panel: the effective multiplier, its level,
+  // and the raw XP. strength = 1 + 0.1·level; scales Clean Stables' Gold output.
+  strength: number; // effective multiplier (×1.0 at level 0)
+  strengthLevel: number; // 0, 1, 2 …
+  strengthXp: number; // raw accrued Strength XP
 }
 export interface ChronicleView {
   t: string;
@@ -172,6 +194,7 @@ export interface HomeItemView {
   reason?: string; // why locked
   modsSummary: string; // human summary of the item's modifiers
   blurb: string; // flavour text for the hover tooltip
+  gear: boolean; // true → paper-doll gear (equipped on the Player tab); false → generic housing furnishing (Home tab)
 }
 export interface HomeView {
   tier: string; // current tier id
@@ -181,6 +204,29 @@ export interface HomeView {
   used: number; // equipped count
   tiers: HomeTierView[];
   items: HomeItemView[];
+}
+// ---- paper-doll EQUIPMENT view (v0.1.3 — the Player tab) ----
+/** One doll position (head, amulet, … ring1, ring2), with the gear worn there (or null). */
+export interface EquipSlotView {
+  position: EquipPosition;
+  slotLabel: string; // "Head", "Ring I", …
+  item: HomeItemView | null;
+}
+/** The belt sub-slots opened by the equipped belt (count 0 when no belt is worn). */
+export interface BeltView {
+  count: number; // number of sub-slots the equipped belt provides
+  items: (HomeItemView | null)[]; // sub-slot contents (length === count)
+}
+/** OWNED, not-yet-equipped gear of one slot type, so the UI can offer "equip into <slot>". */
+export interface OwnedGearGroup {
+  slot: EquipSlotType; // the item slot-type these share
+  slotLabel: string; // human label ("Ring", "Belt", …)
+  items: HomeItemView[];
+}
+export interface EquipmentView {
+  slots: EquipSlotView[]; // the eleven doll positions, in render order
+  belt: BeltView; // belt sub-slots
+  ownedGear: OwnedGearGroup[]; // owned-but-unequipped gear, grouped by slot type
 }
 export interface UiState {
   resources: { gold: ResourceView; insight: ResourceView; renown: ResourceView };
@@ -193,6 +239,7 @@ export interface UiState {
   cantrips: CantripView[];
   slots: { used: number; total: number };
   home: HomeView;
+  equipment: EquipmentView;
   founding: FoundingView;
   chronicle: ChronicleView[];
 }
@@ -278,6 +325,11 @@ function tagText(def: TaskDef, info: TaskInfo): string {
 function tokens(list: { id: string; amount: number }[] | undefined, perSec: boolean): string {
   return (list ?? []).map((a) => `${g(a.id)}${numStr(a.amount)}${perSec ? '/s' : ''}`).join(' ');
 }
+/** Resolve the 'affinity' sentinel to the player's awakened element so contract cost/
+ *  output lines show the real glyph (e.g. ▼ Water) instead of a bare, iconless number. */
+function resolveAmounts(state: GameState, list: Amount[] | undefined): Amount[] {
+  return (list ?? []).map((a) => ({ ...a, id: resolveAffinityId(state, a.id) }));
+}
 function effectSummary(def: TaskDef): string {
   return (def.effects ?? [])
     .map((e) => {
@@ -285,27 +337,38 @@ function effectSummary(def: TaskDef): string {
       if (e.kind === 'raiseInsightCap') return `+${e.amount} ◈ cap`;
       if (e.kind === 'raiseGoldCap') return `+${e.amount} ⦿ cap`;
       if (e.kind === 'flag') return `unlocks ${e.flag}`;
+      if (e.kind === 'beginLodging') return 'a room at the Inn (opens Home)';
       return '';
     })
     .filter(Boolean)
     .join(', ');
 }
+/** An element-tool's mechanical payoff line: "+50% ▲ job Gold" (v0.1.5). "" for non-tools. */
+function toolBoostText(def: TaskDef): string {
+  if (!def.toolBoost) return '';
+  return `+${Math.round(def.toolBoost.mult * 100)}% ${g(def.toolBoost.element)} job Gold`;
+}
 /** Consumed side of a task: instant→startCost, perpetual→per-second runCost,
  *  timed→startCost + per-second runCost. "" when the task costs nothing. */
-function costText(def: TaskDef): string {
-  if (def.type === 'instant') return tokens(def.startCost, false);
-  if (def.type === 'perpetual') return tokens(def.runCost, true);
-  return [tokens(def.startCost, false), tokens(def.runCost, true)].filter(Boolean).join(' + ');
+function costText(state: GameState, def: TaskDef): string {
+  if (def.type === 'instant') return tokens(resolveAmounts(state, def.startCost), false);
+  if (def.type === 'perpetual') return tokens(resolveAmounts(state, def.runCost), true);
+  return [tokens(resolveAmounts(state, def.startCost), false), tokens(resolveAmounts(state, def.runCost), true)]
+    .filter(Boolean)
+    .join(' + ');
 }
 /** Produced side of a task: output tokens (per-second for perpetual), the random-loot
  *  phrasing for Scavenge, or an effect summary for upgrades/milestones. */
-function outputText(def: TaskDef): string {
+function outputText(state: GameState, def: TaskDef): string {
   if (def.randomOutput) return 'a random basic material';
-  return def.output && def.output.length ? tokens(def.output, def.type === 'perpetual') : effectSummary(def);
+  if (def.toolBoost) return toolBoostText(def);
+  return def.output && def.output.length
+    ? tokens(resolveAmounts(state, def.output), def.type === 'perpetual')
+    : effectSummary(def);
 }
-function costLine(def: TaskDef): string {
-  const left = costText(def) || '—';
-  const out = outputText(def);
+function costLine(state: GameState, def: TaskDef): string {
+  const left = costText(state, def) || '—';
+  const out = outputText(state, def);
   return out ? `${left} → ${out}` : left;
 }
 /** Founding (Home-tab) tasks have no `output` — their value is a milestone, so
@@ -336,7 +399,7 @@ function payoffText(def: TaskDef, info: TaskInfo): string {
     const net = info.net[id] ?? 0;
     return `net ${signStr(net)}${numStr(Math.abs(net))} ${g(id)}/s`;
   }
-  return effectSummary(def);
+  return toolBoostText(def) || effectSummary(def);
 }
 function atNText(def: TaskDef, count: number): string | undefined {
   if (!def.atN || !def.atN.length) return undefined;
@@ -365,7 +428,7 @@ function buildTaskView(state: GameState, def: TaskDef, info: TaskInfo): TaskView
     panel: def.panel ?? 'main',
     group: def.tag,
     tag: tagText(def, info),
-    io: costLine(def),
+    io: costLine(state, def),
     active: info.active,
     locked: info.locked,
     revealed: info.revealed,
@@ -385,8 +448,8 @@ function buildTaskView(state: GameState, def: TaskDef, info: TaskInfo): TaskView
     capMark: cap.capMark,
     capNote: cap.capNote,
     timeText: chipText(def),
-    costText: costText(def),
-    outputText: outputText(def),
+    costText: costText(state, def),
+    outputText: outputText(state, def),
     blurb: def.blurb,
   };
 }
@@ -430,8 +493,92 @@ function firstUnmetReason(state: GameState, requires: Requirement[] | undefined)
   return undefined;
 }
 
-function buildHomeView(state: GameState): HomeView {
+/** Map a HomeItem → its view (shop card / doll slot). `equipped` is true whether the item
+ *  sits in a generic housing slot OR on the paper doll (gear), so a shop card reads right
+ *  for both families. */
+function homeItemView(state: GameState, it: HomeItem): HomeItemView {
   const home = state.run.home ?? { tier: 'vagrant', owned: [], equipped: [] };
+  const owned = home.owned.includes(it.id);
+  const equipped = it.slot ? isGearEquipped(state, it.id) : (home.equipped ?? []).includes(it.id);
+  const reqOk = meetsRequirements(state, it.requires);
+  return {
+    id: it.id,
+    name: it.name,
+    cost: tokens(it.cost, false),
+    owned,
+    equipped,
+    affordable: canAfford(state, it.cost, 1),
+    locked: !reqOk,
+    reason: reqOk ? undefined : firstUnmetReason(state, it.requires),
+    modsSummary: it.mods.map(modLabel).join(' · '),
+    blurb: it.blurb,
+    gear: !!it.slot,
+  };
+}
+
+/** Human label for an item slot-type (owned-gear grouping / equip prompts). */
+const SLOT_TYPE_LABEL: Record<EquipSlotType, string> = {
+  head: 'Head',
+  amulet: 'Amulet',
+  torso: 'Torso',
+  body: 'Body',
+  leftHand: 'Left Hand',
+  rightHand: 'Right Hand',
+  belt: 'Belt',
+  legs: 'Legs',
+  boots: 'Boots',
+  ring: 'Ring',
+  beltItem: 'Belt Pouch',
+};
+
+/** Build the paper-doll view: the eleven positions, the belt sub-slots, and the
+ *  owned-but-unequipped gear grouped by slot type (so the UI can offer "equip into <slot>"). */
+function buildEquipmentView(state: GameState): EquipmentView {
+  const home = state.run.home ?? { tier: 'vagrant', owned: [], equipped: [], equipment: {}, beltItems: [] };
+  const equipment = (home.equipment ?? {}) as Record<EquipPosition, string | null>;
+  const beltItems = home.beltItems ?? [];
+
+  const slots: EquipSlotView[] = EQUIP_POSITIONS.map((position) => {
+    const id = equipment[position] ?? null;
+    const def = id ? HOME_ITEM_BY_ID[id] : undefined;
+    return {
+      position,
+      slotLabel: EQUIP_POSITION_LABEL[position],
+      item: def ? homeItemView(state, def) : null,
+    };
+  });
+
+  const belt: BeltView = {
+    count: beltItems.length,
+    items: beltItems.map((id) => {
+      const def = id ? HOME_ITEM_BY_ID[id] : undefined;
+      return def ? homeItemView(state, def) : null;
+    }),
+  };
+
+  // Owned gear that is not currently worn, grouped by slot type (skip belt sub-items when
+  // no belt is equipped — there is nowhere to put them yet).
+  const hasBelt = equipment.belt != null;
+  const groups = new Map<EquipSlotType, HomeItemView[]>();
+  for (const it of HOME_ITEMS) {
+    if (!it.slot) continue; // gear only
+    if (!home.owned.includes(it.id)) continue;
+    if (isGearEquipped(state, it.id)) continue; // already worn
+    if (it.slot === 'beltItem' && !hasBelt) continue;
+    const list = groups.get(it.slot) ?? [];
+    list.push(homeItemView(state, it));
+    groups.set(it.slot, list);
+  }
+  const ownedGear: OwnedGearGroup[] = [...groups.entries()].map(([slot, items]) => ({
+    slot,
+    slotLabel: SLOT_TYPE_LABEL[slot],
+    items,
+  }));
+
+  return { slots, belt, ownedGear };
+}
+
+function buildHomeView(state: GameState): HomeView {
   const cur = homeTier(state);
   const tiers: HomeTierView[] = HOME_TIERS.map((t) => {
     const current = t.id === cur.id;
@@ -449,23 +596,7 @@ function buildHomeView(state: GameState): HomeView {
     const modsSummary = (t.innate ?? []).map(modLabel).join(' · ');
     return { id: t.id, name: t.name, slots: t.slots, cost, locked, reason, current, reachable, modsSummary, blurb: t.blurb };
   });
-  const items: HomeItemView[] = HOME_ITEMS.map((it) => {
-    const owned = home.owned.includes(it.id);
-    const equipped = home.equipped.includes(it.id);
-    const reqOk = meetsRequirements(state, it.requires);
-    return {
-      id: it.id,
-      name: it.name,
-      cost: tokens(it.cost, false),
-      owned,
-      equipped,
-      affordable: canAfford(state, it.cost, 1),
-      locked: !reqOk,
-      reason: reqOk ? undefined : firstUnmetReason(state, it.requires),
-      modsSummary: it.mods.map(modLabel).join(' · '),
-      blurb: it.blurb,
-    };
-  });
+  const items: HomeItemView[] = HOME_ITEMS.map((it) => homeItemView(state, it));
   return {
     tier: cur.id,
     name: cur.name,
@@ -636,6 +767,9 @@ export function toView(state: GameState): UiState {
       title: state.run.title ?? 'Waif',
       renown: r.renown,
       needsNaming: (state.run.name ?? '') === '',
+      strength: engineStrength(state),
+      strengthLevel: engineStrengthLevel(state),
+      strengthXp: state.run.strengthXp ?? 0,
     },
     vitals: {
       // regen is the EFFECTIVE rate the tick applies (base + equipped-item `rate` mods),
@@ -669,12 +803,17 @@ export function toView(state: GameState): UiState {
       // The lair beat reveals Home (fixtures + the Founding card).
       { id: 'home', label: 'Home', visible: state.run.flags.lairFounded === true, locked: false },
       // Academy: the always-visible beacon, greyed until the Founding flips it (§3.11).
-      { id: 'academy', label: founded ? 'Academy ★' : 'Academy', visible: true, locked: !founded },
+      // Academy tab hidden until the Founding is unveiled (~Act 4) — see SHOW_FOUNDING.
+      { id: 'academy', label: founded ? 'Academy ★' : 'Academy', visible: SHOW_FOUNDING, locked: !founded },
     ],
-    tasks: TASKS.map((def, i) => buildTaskView(state, def, infos[i])),
+    // Founding tasks (Charter / Site / Found the Academy) are hidden until ~Act 4.
+    tasks: TASKS.map((def, i) => buildTaskView(state, def, infos[i])).filter(
+      (t) => SHOW_FOUNDING || t.group !== 'Founding',
+    ),
     cantrips: listCantripInfo(state).map((info) => buildCantripView(info)),
     slots: { used: slotsUsed(state), total: activitySlots(state) },
     home: buildHomeView(state),
+    equipment: buildEquipmentView(state),
     founding: {
       phase: state.run.phase,
       founded,
@@ -805,6 +944,20 @@ export function equipItem(itemId: string): void {
 }
 export function unequipItem(itemId: string): void {
   engineUnequipItem(state, itemId);
+  publish();
+}
+// Paper-doll gear (v0.1.3): equip into a resolved/optional position, unequip a position,
+// unequip a belt sub-item by index. Each calls the engine then republishes.
+export function equipGear(itemId: string, position?: string): void {
+  engineEquipGear(state, itemId, position);
+  publish();
+}
+export function unequipGear(position: string): void {
+  engineUnequipGear(state, position);
+  publish();
+}
+export function unequipBeltItem(index: number): void {
+  engineUnequipBeltItem(state, index);
   publish();
 }
 

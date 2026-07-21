@@ -2,10 +2,10 @@
 // No DOM, no Svelte. Everything the sim, save, and CLI touch lives here.
 
 import { STARTING } from '../content/config';
-import type { HomeTierId } from '../content/home';
+import { EQUIP_POSITIONS, type EquipPosition, type HomeTierId } from '../content/home';
 import { seedFrom } from './rng';
 
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 5;
 
 export type ElementId = 'prism' | 'fire' | 'water' | 'earth' | 'air' | 'dark' | 'light';
 
@@ -28,8 +28,12 @@ export interface Caps {
 /** The lair (v0.1.1): a housing tier plus the items you own and have equipped. */
 export interface HomeState {
   tier: HomeTierId;
-  owned: string[]; // item ids purchased
-  equipped: string[]; // item ids currently slotted (⊆ owned, ≤ tier.slots)
+  owned: string[]; // item ids purchased (ALL items — gear + generic — go here)
+  equipped: string[]; // generic housing-slot item ids currently slotted (⊆ owned, ≤ tier.slots)
+  // Paper-doll EQUIPMENT (v0.1.3): the eleven positions, each holding a gear item id or null.
+  equipment: Record<EquipPosition, string | null>;
+  // Belt sub-slot contents — length tracks the equipped belt's `beltSlots` (0 when no belt).
+  beltItems: (string | null)[];
 }
 
 export interface Vital {
@@ -67,9 +71,19 @@ export interface RunState {
   vitals: { life: Vital; stamina: Vital; mana: Vital };
   essence: Record<ElementId, EssenceState>;
   tasks: Record<string, TaskRuntime>; // T-004
-  activitySlots: number; // continuous-task capacity (starts 2; "Widen the Study" raises to 3) — T-004
+  activitySlots: number; // continuous-task capacity (starts 2) — T-004
   skills: string[]; // learned cantrip ids (T-005)
   home: HomeState; // housing tier + owned/equipped items (v0.1.1)
+  // Strength (v0.1.4): a physical-labour stat. strengthXp accrues from Clean Stables;
+  // the effective multiplier is DERIVED from it (see systems/player.ts strength()).
+  strengthXp: number;
+  // Hidden elemental AFFINITY (v0.1.4): a per-element counter incremented whenever an
+  // element-tagged income task completes. The dominant element becomes the FIRST awakened
+  // element (via the Spark cantrip's awakenAffinity effect). `affinityElement` is that
+  // awakened element (null until awakening); it resolves the 'affinity' essence sentinel
+  // in contract costs. Defaults to 'fire' everywhere it is unset (back-compat).
+  affinity: Record<ElementId, number>;
+  affinityElement: ElementId | null;
   flags: Record<string, boolean>;
   chronicle: ChronicleEntry[];
 }
@@ -97,6 +111,20 @@ function freshEssence(): Record<ElementId, EssenceState> {
   const e = {} as Record<ElementId, EssenceState>;
   for (const id of ELEMENTS) e[id] = { amount: 0, awakened: false };
   return e;
+}
+
+/** A brand-new paper-doll: every equipment position empty. Exported for save normalize/migrate. */
+export function freshEquipment(): Record<EquipPosition, string | null> {
+  const eq = {} as Record<EquipPosition, string | null>;
+  for (const pos of EQUIP_POSITIONS) eq[pos] = null;
+  return eq;
+}
+
+/** A brand-new affinity ledger: every element at 0. Exported for save normalize/migrate. */
+export function freshAffinity(): Record<ElementId, number> {
+  const a = {} as Record<ElementId, number>;
+  for (const id of ELEMENTS) a[id] = 0;
+  return a;
 }
 
 /** A brand-new Act I save: a penniless stable-hand at the Origin. */
@@ -136,7 +164,10 @@ export function newGame(seed: number = seedFrom(Date.now())): GameState {
       tasks: {},
       activitySlots: STARTING.activitySlots,
       skills: [],
-      home: { tier: 'vagrant', owned: [], equipped: [] },
+      home: { tier: 'vagrant', owned: [], equipped: [], equipment: freshEquipment(), beltItems: [] },
+      strengthXp: 0,
+      affinity: freshAffinity(),
+      affinityElement: null,
       flags: {},
       chronicle: [{ at: 0, text: 'You awaken, penniless, in the stable straw.' }],
     },

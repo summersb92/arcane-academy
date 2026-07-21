@@ -12,14 +12,17 @@
 // hoisted declarations, so the ESM cycle resolves cleanly.
 
 import {
+  EQUIP_POSITIONS,
   HOME_ITEM_BY_ID,
   HOME_TIER_BY_ID,
+  type EquipPosition,
+  type HomeItem,
   type HomeTier,
   type Modifier,
   type ModTarget,
 } from '../../content/home';
 import { AMOUNT_LABEL, type VitalId } from '../../content/tasks';
-import { ELEMENTS, type ElementId, type GameState, type ResourceId } from '../state';
+import { ELEMENTS, freshEquipment, type ElementId, type GameState, type ResourceId } from '../state';
 import { logEvent } from './chronicle';
 import { canAfford, applyAmounts, meetsRequirements } from './tasks';
 import { outputMult } from './skills';
@@ -51,12 +54,33 @@ export function homeSlotsUsed(state: GameState): number {
   return state.run.home?.equipped?.length ?? 0;
 }
 
-/** Every active Modifier right now: the current tier's innate mods + every equipped item's mods. */
+/** Every currently-worn GEAR item id (paper doll): each occupied equipment position plus
+ *  every filled belt sub-slot. Order is doll order, then belt order. */
+export function equippedGearIds(state: GameState): string[] {
+  const home = state.run.home;
+  const ids: string[] = [];
+  const eq = home?.equipment;
+  if (eq) {
+    for (const pos of EQUIP_POSITIONS) {
+      const id = eq[pos];
+      if (id) ids.push(id);
+    }
+  }
+  for (const id of home?.beltItems ?? []) if (id) ids.push(id);
+  return ids;
+}
+
+/** Every active Modifier right now: the current tier's innate mods, every generic
+ *  housing-slot item's mods, AND every worn paper-doll gear + belt sub-item's mods. */
 export function activeMods(state: GameState): Modifier[] {
   const mods: Modifier[] = [];
   const tier = homeTier(state);
   if (tier.innate) mods.push(...tier.innate);
   for (const id of state.run.home?.equipped ?? []) {
+    const item = HOME_ITEM_BY_ID[id];
+    if (item) mods.push(...item.mods);
+  }
+  for (const id of equippedGearIds(state)) {
     const item = HOME_ITEM_BY_ID[id];
     if (item) mods.push(...item.mods);
   }
@@ -135,6 +159,11 @@ export function homeRateContribs(state: GameState): HomeRateContribution[] {
     if (!item) continue;
     for (const m of item.mods) if (m.kind === 'rate') out.push({ name: item.name, target: m.target, amount: m.amount });
   }
+  for (const id of equippedGearIds(state)) {
+    const item = HOME_ITEM_BY_ID[id];
+    if (!item) continue;
+    for (const m of item.mods) if (m.kind === 'rate') out.push({ name: item.name, target: m.target, amount: m.amount });
+  }
   return out;
 }
 
@@ -191,9 +220,14 @@ export function runHome(state: GameState, dt: number): void {
 // ---- actions (player / UI / CLI) ----
 function ensureHome(state: GameState): GameState['run']['home'] {
   const run = state.run;
-  if (!run.home || typeof run.home !== 'object') run.home = { tier: 'vagrant', owned: [], equipped: [] };
+  if (!run.home || typeof run.home !== 'object') {
+    run.home = { tier: 'vagrant', owned: [], equipped: [], equipment: freshEquipment(), beltItems: [] };
+  }
   if (!Array.isArray(run.home.owned)) run.home.owned = [];
   if (!Array.isArray(run.home.equipped)) run.home.equipped = [];
+  if (!run.home.equipment || typeof run.home.equipment !== 'object') run.home.equipment = freshEquipment();
+  for (const pos of EQUIP_POSITIONS) if (!(pos in run.home.equipment)) run.home.equipment[pos] = null;
+  if (!Array.isArray(run.home.beltItems)) run.home.beltItems = [];
   return run.home;
 }
 
@@ -238,6 +272,7 @@ export function equipItem(state: GameState, itemId: string): boolean {
   const home = ensureHome(state);
   const item = HOME_ITEM_BY_ID[itemId];
   if (!item) return false;
+  if (item.slot) return false; // gear goes on the paper doll (equipGear), never a housing slot
   if (!home.owned.includes(itemId)) return false;
   if (home.equipped.includes(itemId)) return false;
   if (home.equipped.length >= homeSlots(state)) return false; // no free slot
@@ -254,6 +289,116 @@ export function unequipItem(state: GameState, itemId: string): boolean {
   const i = home.equipped.indexOf(itemId);
   if (i < 0) return false;
   home.equipped.splice(i, 1);
+  logEvent(state, `Unequipped: ${HOME_ITEM_BY_ID[itemId]?.name ?? itemId}.`);
+  return true;
+}
+
+// ---- paper-doll EQUIPMENT actions (v0.1.3) ----
+
+/** The two ring positions, in fill-preference order. */
+const RING_POSITIONS: EquipPosition[] = ['ring1', 'ring2'];
+
+/** Is this item id currently worn as gear (any doll position or belt sub-slot)? */
+export function isGearEquipped(state: GameState, itemId: string): boolean {
+  return equippedGearIds(state).includes(itemId);
+}
+
+/** Resolve the fixed doll POSITION for a non-ring, non-belt-sub gear item's slot type
+ *  (head/amulet/torso/body/leftHand/rightHand/belt/legs/boots map 1:1 to a position). */
+function fixedPosition(item: HomeItem): EquipPosition | null {
+  switch (item.slot) {
+    case 'head':
+    case 'amulet':
+    case 'torso':
+    case 'body':
+    case 'leftHand':
+    case 'rightHand':
+    case 'belt':
+    case 'legs':
+    case 'boots':
+      return item.slot;
+    default:
+      return null; // ring / beltItem resolve dynamically
+  }
+}
+
+/** Resize the belt sub-slot array to `n`, preserving existing sub-items up to the new
+ *  length. Any overflow items simply return to `owned` (they are never removed from it). */
+function resizeBeltItems(home: GameState['run']['home'], n: number): void {
+  const next: (string | null)[] = [];
+  for (let i = 0; i < n; i++) next.push(home.beltItems[i] ?? null);
+  home.beltItems = next;
+}
+
+/**
+ * Equip an OWNED gear item onto the paper doll. Resolves the target position by slot
+ * type: a ring goes to the requested ring (ring1|ring2) or the first free ring (else
+ * ring1, swapping its occupant out); a belt goes to 'belt' (opening its sub-slots); a
+ * beltItem fills the first free belt sub-slot (fails if no belt / all full); everything
+ * else goes to its fixed position. Swapping into an occupied position returns the old
+ * item to `owned` (it stays owned, just unslotted). Awakens essence for an essence-rate
+ * item (mirrors equipItem). Returns false (no mutation) if refused.
+ */
+export function equipGear(state: GameState, itemId: string, position?: string): boolean {
+  const home = ensureHome(state);
+  const item = HOME_ITEM_BY_ID[itemId];
+  if (!item || !item.slot) return false; // not gear
+  if (!home.owned.includes(itemId)) return false;
+  if (isGearEquipped(state, itemId)) return false; // already worn
+
+  if (item.slot === 'beltItem') {
+    // Needs a belt with a free sub-slot.
+    const free = home.beltItems.indexOf(null);
+    if (free < 0) return false; // no belt equipped, or all sub-slots full
+    home.beltItems[free] = itemId;
+  } else if (item.slot === 'ring') {
+    let pos: EquipPosition;
+    if (position === 'ring1' || position === 'ring2') {
+      pos = position;
+    } else {
+      pos = RING_POSITIONS.find((p) => home.equipment[p] === null) ?? 'ring1';
+    }
+    home.equipment[pos] = itemId; // occupant (if any) returns to owned (stays owned, just unslotted)
+  } else if (item.slot === 'belt') {
+    home.equipment.belt = itemId; // old belt (if any) returns to owned
+    resizeBeltItems(home, Math.max(0, item.beltSlots ?? 0));
+  } else {
+    const pos = fixedPosition(item);
+    if (!pos) return false;
+    home.equipment[pos] = itemId; // occupant (if any) returns to owned
+  }
+
+  awakenHomeEssence(state); // an essence-rate item (e.g. a fiery ring) awakens its element on equip
+  logEvent(state, `Equipped: ${item.name}.`, 'ev');
+  return true;
+}
+
+/**
+ * Unequip the gear at a doll POSITION, returning it to `owned` (it was never removed from
+ * owned; this just clears the slot). Unequipping the `belt` also returns every belt
+ * sub-item to `owned` and clears beltItems (length 0). Returns false if the position was
+ * empty or invalid.
+ */
+export function unequipGear(state: GameState, position: string): boolean {
+  const home = ensureHome(state);
+  if (!(EQUIP_POSITIONS as readonly string[]).includes(position)) return false;
+  const pos = position as EquipPosition;
+  const itemId = home.equipment[pos];
+  if (!itemId) return false;
+  home.equipment[pos] = null;
+  if (pos === 'belt') resizeBeltItems(home, 0); // belt sub-items all return to owned
+  logEvent(state, `Unequipped: ${HOME_ITEM_BY_ID[itemId]?.name ?? itemId}.`);
+  return true;
+}
+
+/** Unequip the belt sub-item at `index`, returning it to `owned`. Returns false if the
+ *  index is out of range or already empty. */
+export function unequipBeltItem(state: GameState, index: number): boolean {
+  const home = ensureHome(state);
+  if (index < 0 || index >= home.beltItems.length) return false;
+  const itemId = home.beltItems[index];
+  if (!itemId) return false;
+  home.beltItems[index] = null;
   logEvent(state, `Unequipped: ${HOME_ITEM_BY_ID[itemId]?.name ?? itemId}.`);
   return true;
 }

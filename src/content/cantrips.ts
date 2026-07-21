@@ -14,7 +14,8 @@ import type { VitalId } from './tasks';
 /** One applied consequence of learning a cantrip. */
 export type CantripEffect =
   | { kind: 'openTree' } // Read the Page — flavour node that opens the web (no mechanical payload)
-  | { kind: 'awaken'; element: ElementId; trickle: number } // awaken an essence + start its per-second trickle
+  | { kind: 'awaken'; element: ElementId; trickle: number } // awaken a FIXED essence + start its per-second trickle
+  | { kind: 'awakenAffinity'; trickle: number } // awaken your DOMINANT affinity element (v0.1.4) + start its trickle
   | { kind: 'vitalRegen'; vital: VitalId; amount: number } // permanent +regen to a vital
   | { kind: 'unlockVital'; vital: VitalId; max: number; regen: number } // unlock a locked vital (sets its max + regen)
   | { kind: 'outputMult'; add: number } // global output multiplier (+0.10 = +10% all output)
@@ -56,11 +57,14 @@ export const CANTRIPS: Cantrip[] = [
   {
     id: 'spark',
     name: 'Spark',
-    blurb: 'A word of ignition. ▲ Fire essence begins to trickle into you.',
+    // v0.1.4: the first spark follows your DOMINANT affinity (the element you've laboured
+    // at most). With no element work done it defaults to ▲ Fire, so the classic path is
+    // unchanged; a water-hauler awakens ▼ Water instead, and so on.
+    blurb: 'A word of ignition. The essence you have leaned toward begins to trickle into you.',
     cost: 20,
     scrollCost: 1,
     requires: ['read-the-page'],
-    effects: [{ kind: 'awaken', element: 'fire', trickle: 0.2 }],
+    effects: [{ kind: 'awakenAffinity', trickle: 0.2 }],
   },
   {
     id: 'mend',

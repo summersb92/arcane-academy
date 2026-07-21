@@ -5,7 +5,16 @@
 // No DOM, no Svelte — the DOM download/upload is a thin UI adapter over this.
 
 import { STARTING } from '../content/config';
-import { ELEMENTS, SAVE_VERSION, type ElementId, type GameState, type ResourceId } from './state';
+import { EQUIP_POSITIONS, HOME_ITEM_BY_ID } from '../content/home';
+import {
+  ELEMENTS,
+  SAVE_VERSION,
+  freshAffinity,
+  freshEquipment,
+  type ElementId,
+  type GameState,
+  type ResourceId,
+} from './state';
 
 export const SAVE_MAGIC = 'arcane-academy-save';
 export const SAVE_FILE_EXT = '.aasave';
@@ -93,6 +102,14 @@ export function migrate(state: GameState, fromVersion: number): GameState {
     s = migrate2to3(s);
     v = 3;
   }
+  if (v === 3) {
+    s = migrate3to4(s);
+    v = 4;
+  }
+  if (v === 4) {
+    s = migrate4to5(s);
+    v = 5;
+  }
   void v;
   s.version = SAVE_VERSION;
   return s;
@@ -118,7 +135,9 @@ function migrate1to2(s: GameState): GameState {
   if (typeof caps.moonpetal !== 'number') caps.moonpetal = STARTING.materialCap;
   if (typeof caps.ironOre !== 'number') caps.ironOre = STARTING.materialCap;
   if (typeof caps.spiritDust !== 'number') caps.spiritDust = STARTING.materialCap;
-  if (!run.home || typeof run.home !== 'object') run.home = { tier: 'vagrant', owned: [], equipped: [] };
+  if (!run.home || typeof run.home !== 'object') {
+    run.home = { tier: 'vagrant', owned: [], equipped: [], equipment: freshEquipment(), beltItems: [] };
+  }
   const st = (s.settings ??= {} as GameState['settings']);
   if (typeof st.chronicleLines !== 'number') st.chronicleLines = 8;
   if (typeof st.font !== 'string') st.font = 'mono';
@@ -135,6 +154,40 @@ function migrate2to3(s: GameState): GameState {
   }
   if (typeof run.name !== 'string') run.name = '';
   if (typeof run.title !== 'string') run.title = 'Waif';
+  return s;
+}
+
+/** v3 → v4 (v0.1.3): the paper-doll EQUIPMENT system arrives. Establish the two new
+ *  home containers (equipment: all eleven positions → null, beltItems: []); normalize()
+ *  below fills anything this rung leaves untouched. Old owned/equipped are preserved. */
+function migrate3to4(s: GameState): GameState {
+  const run = (s.run ??= {} as GameState['run']);
+  const home = (run.home ??= { tier: 'vagrant', owned: [], equipped: [], equipment: freshEquipment(), beltItems: [] });
+  if (!home.equipment || typeof home.equipment !== 'object') home.equipment = freshEquipment();
+  if (!Array.isArray(home.beltItems)) home.beltItems = [];
+  if (!Array.isArray(home.owned)) home.owned = [];
+  if (!Array.isArray(home.equipped)) home.equipped = [];
+  // Several v0.1.2 GENERIC items (tool-belt, herbalist-kit, charm-of-vigor, mana-crystal)
+  // became paper-doll GEAR in v0.1.3. A v3 save may hold such an id in the generic
+  // `equipped[]`; left there, its mods would be counted a SECOND time once the player
+  // re-equips it on the doll (activeMods sums both lists). Pull every now-gear id out of
+  // `equipped[]` and return it to `owned` (no loss — the player re-equips it on the doll).
+  const nowGear = home.equipped.filter((id) => HOME_ITEM_BY_ID[id]?.slot);
+  if (nowGear.length) {
+    home.equipped = home.equipped.filter((id) => !HOME_ITEM_BY_ID[id]?.slot);
+    for (const id of nowGear) if (!home.owned.includes(id)) home.owned.push(id);
+  }
+  return s;
+}
+
+/** v4 → v5 (v0.1.4): the Strength stat + hidden elemental affinity arrive. Establish the
+ *  three new run containers (strengthXp: 0, affinity: all elements → 0, affinityElement:
+ *  null); normalize() below fills anything this rung leaves untouched. */
+function migrate4to5(s: GameState): GameState {
+  const run = (s.run ??= {} as GameState['run']);
+  if (typeof run.strengthXp !== 'number') run.strengthXp = 0;
+  if (!run.affinity || typeof run.affinity !== 'object') run.affinity = freshAffinity();
+  if (run.affinityElement === undefined) run.affinityElement = null;
   return s;
 }
 
@@ -214,10 +267,34 @@ export function normalize(state: GameState): void {
   if (typeof run.title !== 'string') run.title = 'Waif';
 
   // home (v0.1.1) — read models spread run.home.equipped/owned on render, so back it up.
-  if (!run.home || typeof run.home !== 'object') run.home = { tier: 'vagrant', owned: [], equipped: [] };
+  if (!run.home || typeof run.home !== 'object') {
+    run.home = { tier: 'vagrant', owned: [], equipped: [], equipment: freshEquipment(), beltItems: [] };
+  }
   if (typeof run.home.tier !== 'string') run.home.tier = 'vagrant';
   if (!Array.isArray(run.home.owned)) run.home.owned = [];
   if (!Array.isArray(run.home.equipped)) run.home.equipped = [];
+  // Paper-doll equipment (v0.1.3) — read models iterate every position + beltItems on
+  // render, so backfill ABSENT containers. A present-but-garbage value is left to validate().
+  if (!run.home.equipment || typeof run.home.equipment !== 'object') run.home.equipment = freshEquipment();
+  for (const pos of EQUIP_POSITIONS) {
+    if (!(pos in run.home.equipment)) run.home.equipment[pos] = null;
+  }
+  if (!Array.isArray(run.home.beltItems)) run.home.beltItems = [];
+  // Reconcile the belt sub-slot count with the equipped belt: beltItems must be exactly
+  // as long as the worn belt grants (0 with no belt). A mismatch (hand-edited save, or a
+  // belt whose beltSlots changed in content) would otherwise render phantom pouches and
+  // count phantom mods. Overflow sub-items fall back to `owned` (never dropped).
+  {
+    const beltId = run.home.equipment.belt;
+    const beltSlots = beltId ? (HOME_ITEM_BY_ID[beltId]?.beltSlots ?? 0) : 0;
+    if (run.home.beltItems.length > beltSlots) {
+      for (const id of run.home.beltItems.slice(beltSlots)) {
+        if (id && !run.home.owned.includes(id)) run.home.owned.push(id);
+      }
+      run.home.beltItems.length = beltSlots;
+    }
+    while (run.home.beltItems.length < beltSlots) run.home.beltItems.push(null);
+  }
 
   // Backfill ABSENT (undefined) cap keys only — a present-but-garbage value (e.g. a
   // null from a serialized Infinity/NaN) is left for validate() to reject, never healed.
@@ -246,6 +323,20 @@ export function normalize(state: GameState): void {
     if (!run.essence[id] || typeof run.essence[id] !== 'object') {
       run.essence[id] = { amount: 0, awakened: false };
     }
+  }
+
+  // Strength + hidden affinity (v0.1.4) — read models spread run.strengthXp / run.affinity
+  // and stores derives Strength from them, so backfill ABSENT containers (a present-but-
+  // garbage value is left to validate()). Ensure every element key exists on affinity.
+  if (typeof run.strengthXp !== 'number') run.strengthXp = 0;
+  if (!run.affinity || typeof run.affinity !== 'object') run.affinity = freshAffinity();
+  for (const id of ELEMENTS as ElementId[]) {
+    if (typeof run.affinity[id] !== 'number') run.affinity[id] = 0;
+  }
+  // affinityElement: null until awakening, else a valid ElementId. Backfill absent → null;
+  // an out-of-domain string (hand-edited/foreign save) is normalized back to null.
+  if (run.affinityElement !== null && !(ELEMENTS as string[]).includes(run.affinityElement as string)) {
+    run.affinityElement = null;
   }
 }
 
@@ -299,6 +390,30 @@ function validate(state: GameState): void {
   if (!Array.isArray(run.home.owned) || !Array.isArray(run.home.equipped)) {
     throw new Error('Save home.owned/equipped must be arrays.');
   }
+  // Paper-doll equipment (v0.1.3): equipment is an object of string|null; beltItems an array.
+  if (!run.home.equipment || typeof run.home.equipment !== 'object' || Array.isArray(run.home.equipment)) {
+    throw new Error('Save home.equipment must be an object.');
+  }
+  for (const [pos, val] of Object.entries(run.home.equipment)) {
+    if (val !== null && typeof val !== 'string') {
+      throw new Error(`Save home.equipment["${pos}"] must be a string or null.`);
+    }
+  }
+  if (!Array.isArray(run.home.beltItems)) throw new Error('Save home.beltItems must be an array.');
+  for (const val of run.home.beltItems) {
+    if (val !== null && typeof val !== 'string') throw new Error('Save home.beltItems entries must be a string or null.');
+  }
+  // Disjointness: an item id must never be worn on the paper doll AND held in the generic
+  // `equipped[]` at once — activeMods sums both, so an overlap double-counts its mods.
+  // Reject it as corruption (migrate3to4 keeps legitimate saves clean of this).
+  {
+    const onDoll = new Set<string>();
+    for (const val of Object.values(run.home.equipment)) if (typeof val === 'string') onDoll.add(val);
+    for (const val of run.home.beltItems) if (typeof val === 'string') onDoll.add(val);
+    for (const id of run.home.equipped) {
+      if (onDoll.has(id)) throw new Error(`Save has "${id}" equipped in two places (doll + generic slot).`);
+    }
+  }
 
   if (run.essence && typeof run.essence === 'object') {
     for (const [id, e] of Object.entries(run.essence)) {
@@ -306,6 +421,20 @@ function validate(state: GameState): void {
         throw new Error(`Essence "${id}" amount is not a finite number.`);
       }
     }
+  }
+
+  // Strength + affinity (v0.1.4).
+  if (typeof run.strengthXp !== 'number' || !Number.isFinite(run.strengthXp) || run.strengthXp < -EPS) {
+    throw new Error('Save run.strengthXp is not a finite, non-negative number.');
+  }
+  if (!run.affinity || typeof run.affinity !== 'object') throw new Error('Save missing affinity.');
+  for (const [id, v] of Object.entries(run.affinity)) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      throw new Error(`Affinity "${id}" is not a finite number.`);
+    }
+  }
+  if (run.affinityElement !== null && !(ELEMENTS as string[]).includes(run.affinityElement as string)) {
+    throw new Error('Save run.affinityElement must be null or a valid element id.');
   }
 
   if (typeof state.playtime !== 'number' || !Number.isFinite(state.playtime)) {

@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { newGame } from '../src/engine/state';
 import { startTask } from '../src/engine/systems/tasks';
-import { buyItem, equipItem, moveHome } from '../src/engine/systems/home';
+import { buyItem, equipGear, moveHome } from '../src/engine/systems/home';
 import { breakdown } from '../src/engine/systems/breakdown';
 
 describe('resource breakdown', () => {
@@ -57,9 +57,11 @@ describe('vital breakdown', () => {
   it('includes base regen and an equipped regen item as producers, and an active task as a consumer', () => {
     const s = newGame(1);
     s.run.flags.awakened = true; // Study is gated behind the spark
-    s.run.resources.gold = 25;
-    expect(buyItem(s, 'herbalist-kit')).toBe(true); // +0.1 Stamina/s
-    expect(equipItem(s, 'herbalist-kit')).toBe(true); // vagrant's single slot
+    s.run.resources.gold = 65; // Tool Belt (40) + Herbalist Kit (25)
+    expect(buyItem(s, 'tool-belt')).toBe(true); // a belt to open sub-slots
+    expect(equipGear(s, 'tool-belt')).toBe(true);
+    expect(buyItem(s, 'herbalist-kit')).toBe(true); // +0.1 Stamina/s (a belt sub-item now)
+    expect(equipGear(s, 'herbalist-kit')).toBe(true); // fills a belt sub-slot
     expect(startTask(s, 'study')).toBe(true); // perpetual, drains 0.2 Stamina/s
 
     const b = breakdown(s, { kind: 'vital', id: 'stamina' });
